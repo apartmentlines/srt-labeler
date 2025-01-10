@@ -1,14 +1,10 @@
 import pytest
-from pathlib import Path
 from unittest.mock import patch, Mock
 
 from srt_labeler.main import (
     parse_arguments,
     main,
     SrtLabeler,
-)
-from srt_labeler.constants import (
-    DEFAULT_PROCESSING_LIMIT,
 )
 
 
@@ -59,9 +55,7 @@ class TestTranscriptionPipeline:
             srt_labeler.retrieve_transcription_data()
 
     def test_setup_configuration(self, srt_labeler):
-        with patch(
-            "srt_labeler.main.set_environment_variables"
-        ) as mock_set_env:
+        with patch("srt_labeler.main.set_environment_variables") as mock_set_env:
             srt_labeler.setup_configuration()
             mock_set_env.assert_called_once_with("test_key", "test_domain")
 
@@ -94,9 +88,7 @@ class TestTranscriptionPipeline:
 
     def test_build_retrieve_request_params_partial_filters(self):
         """Test request params with only some filters set."""
-        srt_labeler = SrtLabeler(
-            api_key="test_key", domain="test_domain", min_id=100
-        )
+        srt_labeler = SrtLabeler(api_key="test_key", domain="test_domain", min_id=100)
         params = srt_labeler.build_retrieve_request_params()
         assert params == {"api_key": "test_key", "min_id": 100}
 
@@ -123,7 +115,6 @@ class TestTranscriptionPipeline:
             srt_labeler.build_retrieve_request_url(),
             {"api_key": "test_key", "min_id": 100, "max_id": 200},
         )
-
 
     def test_cli_arguments_with_filters(self):
         """Test that CLI arguments for filters are properly parsed."""

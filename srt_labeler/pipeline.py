@@ -2,6 +2,7 @@ from typing import Optional
 
 from .logger import Logger
 
+
 class SrtLabelerPipeline:
     def __init__(
         self,

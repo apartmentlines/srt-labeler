@@ -1,5 +1,4 @@
 import pytest
-import sys
 from unittest.mock import patch
 from pathlib import Path
 import datetime
@@ -100,18 +99,21 @@ def test_validatesubtitlecounts_with_mismatched_counts(mock_subtitle):
 
 
 # Test _validate_labels
-@pytest.mark.parametrize("content,should_raise,expected_error", [
-    ("operator: test", False, None),
-    ("test without label", False, None),
-    (":test with no label", False, None),
-    ("invalid: test", True, "Invalid label 'invalid'"),
-    ("OPERATOR: test", False, None),
-])
+@pytest.mark.parametrize(
+    "content,should_raise,expected_error",
+    [
+        ("operator: test", False, None),
+        ("test without label", False, None),
+        (":test with no label", False, None),
+        ("invalid: test", True, "Invalid label 'invalid'"),
+        ("OPERATOR: test", False, None),
+    ],
+)
 def test_validate_labels(mock_subtitle, content, should_raise, expected_error):
     """Test validation of various label formats."""
     merger = SrtMerger()
     sub = mock_subtitle(content)
-    
+
     if should_raise:
         with pytest.raises(SrtMergeError, match=expected_error):
             merger._validate_labels([sub])
@@ -137,7 +139,7 @@ def test_extract_speaker_numeric():
 def test_timing_preservation():
     """Test timing information is preserved throughout the pipeline."""
     merger = SrtMerger()
-    
+
     unlabeled_srt_content = """1
 00:00:01,000 --> 00:00:02,000
 Hello world
@@ -174,18 +176,21 @@ caller: How are you?
     assert "00:00:02,500 --> 00:00:03,500" in merged_content
 
 
-@pytest.mark.parametrize("input_text,expected", [
-    ("operator: test", "operator"),
-    ("speaker1: test", "speaker1"),
-    ("123: test", "123"),
-    ("speaker2: test", "speaker2"),
-    ("test without label", "Unknown"),
-    ("test:without space", "test"),
-    ("test: with space", "test"),
-    (":test", "Unknown"),
-    ("test", "Unknown"),
-    ("", "Unknown"),
-])
+@pytest.mark.parametrize(
+    "input_text,expected",
+    [
+        ("operator: test", "operator"),
+        ("speaker1: test", "speaker1"),
+        ("123: test", "123"),
+        ("speaker2: test", "speaker2"),
+        ("test without label", "Unknown"),
+        ("test:without space", "test"),
+        ("test: with space", "test"),
+        (":test", "Unknown"),
+        ("test", "Unknown"),
+        ("", "Unknown"),
+    ],
+)
 def test_extract_speaker_various_inputs(input_text, expected):
     """Test extraction of speaker labels from various input formats."""
     merger = SrtMerger()
@@ -289,17 +294,25 @@ test
 
 
 # Test read_file
-@pytest.mark.parametrize("content,encoding,expected,should_raise", [
-    ("test content", "utf-8", "test content", False),
-    ("test\ncontent\nwith\nnewlines", "utf-8", "test\ncontent\nwith\nnewlines", False),
-    (b"\xff\xfe\xfd", None, None, True),  # Invalid encoding
-    (None, "utf-8", None, True),  # Missing file
-])
+@pytest.mark.parametrize(
+    "content,encoding,expected,should_raise",
+    [
+        ("test content", "utf-8", "test content", False),
+        (
+            "test\ncontent\nwith\nnewlines",
+            "utf-8",
+            "test\ncontent\nwith\nnewlines",
+            False,
+        ),
+        (b"\xff\xfe\xfd", None, None, True),  # Invalid encoding
+        (None, "utf-8", None, True),  # Missing file
+    ],
+)
 def test_read_file(tmp_path, content, encoding, expected, should_raise):
     """Test reading files with various content and encodings."""
     merger = SrtMerger()
     test_file = tmp_path / "test.srt"
-    
+
     if isinstance(content, str):
         test_file.write_text(content, encoding=encoding)
     elif content is not None:
@@ -414,7 +427,6 @@ def test_merge_with_empty_input():
         merger.merge("", "")
 
 
-
 # Test parse_arguments
 def test_parsearguments_with_required_args():
     """Test parsing required arguments."""
@@ -432,7 +444,8 @@ def test_parsearguments_with_custom_labels():
     test_args = [
         "unlabeled.srt",
         "labeled.srt",
-        "--valid-labels", "host,guest,moderator",
+        "--valid-labels",
+        "host,guest,moderator",
     ]
     with patch("sys.argv", ["script.py"] + test_args):
         args = parse_arguments()
@@ -444,7 +457,8 @@ def test_parsearguments_with_custom_labels_with_spaces():
     test_args = [
         "unlabeled.srt",
         "labeled.srt",
-        "--valid-labels", " host , guest , moderator ",
+        "--valid-labels",
+        " host , guest , moderator ",
     ]
     with patch("sys.argv", ["script.py"] + test_args):
         args = parse_arguments()
@@ -469,7 +483,6 @@ def test_parsearguments_with_missing_required_args():
         parse_arguments([])
 
 
-
 # Test main
 def test_main_with_valid_inputs(capsys, tmp_path):
     """Test successful main execution."""
@@ -484,7 +497,6 @@ def test_main_with_valid_inputs(capsys, tmp_path):
 
     captured = capsys.readouterr()
     assert "operator: test" in captured.out
-
 
 
 def test_main_outputs_merged_content_to_stdout(capsys, tmp_path):
