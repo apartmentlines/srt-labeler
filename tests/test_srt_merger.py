@@ -418,7 +418,7 @@ def test_merge_with_empty_input():
 # Test parse_arguments
 def test_parsearguments_with_required_args():
     """Test parsing required arguments."""
-    test_args = ["--unlabeled-srt", "unlabeled.srt", "--labeled-srt", "labeled.srt"]
+    test_args = ["unlabeled.srt", "labeled.srt"]
     with patch("sys.argv", ["script.py"] + test_args):
         args = parse_arguments()
         assert args.unlabeled_srt == Path("unlabeled.srt")
@@ -430,8 +430,8 @@ def test_parsearguments_with_required_args():
 def test_parsearguments_with_custom_labels():
     """Test parsing custom valid labels."""
     test_args = [
-        "--unlabeled-srt", "unlabeled.srt",
-        "--labeled-srt", "labeled.srt",
+        "unlabeled.srt",
+        "labeled.srt",
         "--valid-labels", "host,guest,moderator",
     ]
     with patch("sys.argv", ["script.py"] + test_args):
@@ -442,8 +442,8 @@ def test_parsearguments_with_custom_labels():
 def test_parsearguments_with_custom_labels_with_spaces():
     """Test parsing custom valid labels with spaces."""
     test_args = [
-        "--unlabeled-srt", "unlabeled.srt",
-        "--labeled-srt", "labeled.srt",
+        "unlabeled.srt",
+        "labeled.srt",
         "--valid-labels", " host , guest , moderator ",
     ]
     with patch("sys.argv", ["script.py"] + test_args):
@@ -454,8 +454,8 @@ def test_parsearguments_with_custom_labels_with_spaces():
 def test_parsearguments_enables_debug_mode():
     """Test parsing debug mode flag."""
     test_args = [
-        "--unlabeled-srt", "unlabeled.srt",
-        "--labeled-srt", "labeled.srt",
+        "unlabeled.srt",
+        "labeled.srt",
         "--debug",
     ]
     with patch("sys.argv", ["script.py"] + test_args):
@@ -478,7 +478,7 @@ def test_main_with_valid_inputs(capsys, tmp_path):
     unlabeled.write_text("1\n00:00:01,000 --> 00:00:02,000\ntest\n\n")
     labeled.write_text("1\n00:00:01,000 --> 00:00:02,000\noperator: test\n\n")
 
-    test_args = ["--unlabeled-srt", str(unlabeled), "--labeled-srt", str(labeled)]
+    test_args = [str(unlabeled), str(labeled)]
     with patch("sys.argv", ["script.py"] + test_args):
         main()
 
@@ -494,7 +494,7 @@ def test_main_outputs_merged_content_to_stdout(capsys, tmp_path):
     unlabeled.write_text("1\n00:00:01,000 --> 00:00:02,000\ntest\n\n")
     labeled.write_text("1\n00:00:01,000 --> 00:00:02,000\noperator: test\n\n")
 
-    test_args = ["--unlabeled-srt", str(unlabeled), "--labeled-srt", str(labeled)]
+    test_args = [str(unlabeled), str(labeled)]
     with patch("sys.argv", ["script.py"] + test_args):
         main()
 

@@ -152,15 +152,13 @@ def parse_arguments(args=None) -> argparse.Namespace:
         description="Merge labeled and unlabeled SRT files"
     )
     parser.add_argument(
-        "--unlabeled-srt",
+        "unlabeled_srt",
         type=Path,
-        required=True,
         help="Path to unlabeled SRT file",
     )
     parser.add_argument(
-        "--labeled-srt",
+        "labeled_srt",
         type=Path,
-        required=True,
         help="Path to labeled SRT file",
     )
     parser.add_argument(
