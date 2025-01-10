@@ -4,7 +4,7 @@ import pytest
 from unittest.mock import patch, Mock
 import requests
 import tenacity
-from transcription_pipeline.utils import (
+from srt_labeler.utils import (
     positive_int,
     fail_hard,
     fail_soft,

@@ -3,7 +3,7 @@ import sys
 import logging
 import requests
 from tenacity import retry, stop_after_attempt, wait_exponential
-from transcription_pipeline.constants import (
+from .constants import (
     DEFAULT_RETRY_ATTEMPTS,
     DEFAULT_RETRY_BACKOFF,
     DOWNLOAD_TIMEOUT,

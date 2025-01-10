@@ -23,7 +23,7 @@ dependencies = [
 ]
 
 [project.scripts]
-srt-merger = "transcription_pipeline.srt_merger:main"
+srt-merger = "srt_labeler.merger:main"
 
 [project.optional-dependencies]
 dev = [
