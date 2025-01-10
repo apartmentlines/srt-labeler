@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "srt-labeler"
+version = "0.1.0"
+description = "Apply speaker labels to the text content of SRT blocks using a language model."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [
+    { name="Chad Phillips", email="chad@apartmentlines.com" },
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "requests",
+    "tenacity",
+    "srt",
+]
+
+[project.scripts]
+srt-merger = "transcription_pipeline.srt_merger:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black",
+    "flake8",
+]

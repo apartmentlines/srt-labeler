@@ -1,0 +1,12 @@
+# Pipeline constants
+DEFAULT_PROCESSING_LIMIT = 3
+
+DEFAULT_RETRY_ATTEMPTS = 3
+DEFAULT_RETRY_BACKOFF = 0.5  # in seconds
+DOWNLOAD_TIMEOUT = 30  # in seconds
+
+# Transcription state constants
+TRANSCRIPTION_STATE_NOT_TRANSCRIBABLE = "not-transcribable"
+TRANSCRIPTION_STATE_READY = "ready"
+TRANSCRIPTION_STATE_ACTIVE = "active"
+TRANSCRIPTION_STATE_COMPLETE = "complete"
