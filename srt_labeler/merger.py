@@ -16,7 +16,7 @@ import argparse
 from pathlib import Path
 from typing import List, Any
 
-from download_pipeline_processor.logger import Logger
+from .logger import Logger
 
 DEFAULT_VALID_LABELS = ["operator", "caller"]
 
