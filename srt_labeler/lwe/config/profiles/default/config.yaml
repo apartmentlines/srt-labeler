@@ -1,0 +1,11 @@
+backend_options:
+  auto_create_first_user: srt-labeler
+  title_generation:
+    provider: openrouter
+model:
+  default_preset: llama-3.3-chatbot
+plugins:
+  enabled:
+    - provider_chat_fireworks
+    - provider_chat_anthropic
+    - provider_openrouter

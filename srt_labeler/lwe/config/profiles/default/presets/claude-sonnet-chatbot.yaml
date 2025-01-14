@@ -1,0 +1,6 @@
+metadata:
+  name: claude-sonnet-chatbot
+  provider: chat_anthropic
+model_customizations:
+  model: claude-3-5-sonnet-20241022
+  temperature: 0
