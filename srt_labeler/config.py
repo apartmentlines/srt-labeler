@@ -1,5 +1,10 @@
 import os
 import argparse
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent
+LWE_CONFIG_DIR = BASE_DIR / "lwe" / "config"
+LWE_DATA_DIR = BASE_DIR / "lwe" / "data"
 
 
 def load_configuration(args: argparse.Namespace) -> tuple[str, str]:
@@ -15,3 +20,5 @@ def load_configuration(args: argparse.Namespace) -> tuple[str, str]:
 def set_environment_variables(api_key: str, domain: str) -> None:
     os.environ["SRT_LABELER_API_KEY"] = api_key
     os.environ["SRT_LABELER_DOMAIN"] = domain
+    os.environ["LWE_CONFIG_DIR"] = str(LWE_CONFIG_DIR)
+    os.environ["LWE_DATA_DIR"] = str(LWE_DATA_DIR)
