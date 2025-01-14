@@ -1,5 +1,6 @@
 # Pipeline constants
 DEFAULT_LWE_POOL_LIMIT = 3
+UUID_SHORT_LENGTH = 8
 
 DEFAULT_RETRY_ATTEMPTS = 3
 DEFAULT_RETRY_BACKOFF = 0.5  # in seconds
@@ -13,3 +14,4 @@ TRANSCRIPTION_STATE_COMPLETE = "complete"
 
 # LWE constants
 LWE_DEFAULT_PRESET = "llama-3.3"
+LWE_FALLBACK_PRESET = "claude-sonnet"
