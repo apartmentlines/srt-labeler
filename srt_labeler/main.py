@@ -46,6 +46,8 @@ class SrtLabeler:
 
     def build_retrieve_request_params(self) -> dict:
         params = {"api_key": self.api_key}
+        if self.limit is not None:
+            params["limit"] = self.limit
         if self.min_id is not None:
             params["min_id"] = self.min_id
         if self.max_id is not None:
@@ -64,9 +66,11 @@ class SrtLabeler:
             response = get_request(url, params)
             resp_json = response.json()
             if resp_json.get("success"):
-                files = resp_json.get("files", [])
-                self.log.info(f"Retrieved {len(files)} files for processing")
-                return files
+                transcriptions = resp_json.get("files", [])
+                self.log.info(
+                    f"Retrieved {len(transcriptions)} transcriptions for processing"
+                )
+                return transcriptions
             else:
                 fail_hard("Failed to retrieve files.")
         except Exception as e:
@@ -87,7 +91,8 @@ class SrtLabeler:
             self.log.info("No transcriptions to process")
             return
         self.log.info("Starting pipeline execution")
-        self.pipeline.run(transcriptions)
+        with self.pipeline:  # Use context manager here
+            self.pipeline.process_transcriptions(transcriptions)
         self.log.info("Transcription pipeline completed")
 
 

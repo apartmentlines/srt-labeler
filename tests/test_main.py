@@ -150,3 +150,5 @@ def test_parse_arguments():
         assert args.api_key == "test_api_key"
         assert args.domain == "test_domain"
         assert args.debug is True
+
+
