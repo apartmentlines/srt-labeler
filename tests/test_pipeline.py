@@ -282,12 +282,12 @@ Operator: Hello world
         pipeline = SrtLabelerPipeline(**pipeline_args)
 
         transcription = {
-            "id": "test123",
+            "id": 123,
             "content": "1\n00:00:01,000 --> 00:00:02,000\nHello world\n",
         }
 
         result = {
-            "id": "test123",
+            "id": 123,
             "labeled_content": """<thinking>Analysis</thinking>
 <transcript>
 1
@@ -306,17 +306,17 @@ Operator: Hello world
             # Verify content was merged and API was updated
             pipeline._merge_srt_content.assert_called_once()
             pipeline.update_transcription.assert_called_once_with(
-                "test123", {"id": "test123", "labeled_content": "merged content"}
+                123, {"id": 123, "labeled_content": "merged content"}
             )
 
     def test_handle_successful_labeling_merge_error(self, pipeline_args):
         """Test handling of merge errors during successful labeling."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
 
-        transcription = {"id": "test123", "content": "invalid content"}
+        transcription = {"id": 123, "content": "invalid content"}
 
         result = {
-            "id": "test123",
+            "id": 123,
             "labeled_content": "<transcript>invalid content</transcript>",
         }
 
@@ -331,10 +331,10 @@ Operator: Hello world
         """Test handling of API update errors during successful labeling."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
 
-        transcription = {"id": "test123", "content": "valid content"}
+        transcription = {"id": 123, "content": "valid content"}
 
         result = {
-            "id": "test123",
+            "id": 123,
             "labeled_content": "<transcript>valid content</transcript>",
         }
 
@@ -351,10 +351,10 @@ Operator: Hello world
         """Test handling of transcript extraction errors during successful labeling."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
 
-        transcription = {"id": "test123", "content": "valid content"}
+        transcription = {"id": 123, "content": "valid content"}
 
         result = {
-            "id": "test123",
+            "id": 123,
             "labeled_content": "invalid transcript format",  # Missing transcript tags
         }
 
@@ -390,7 +390,7 @@ Operator: Hello"""
     def test_prepare_template_vars_basic(self, pipeline_args):
         """Test basic template variable preparation."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
-        transcription = {"id": "123", "content": "test content"}
+        transcription = {"id": 123, "content": "test content"}
         vars = pipeline._prepare_template_vars(transcription)
         assert vars["transcription"] == "test content"
         assert len(vars["identifier"]) == UUID_SHORT_LENGTH
@@ -399,12 +399,12 @@ Operator: Hello"""
         """Test template vars with missing fields."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         with pytest.raises(KeyError):
-            pipeline._prepare_template_vars({"id": "123"})
+            pipeline._prepare_template_vars({"id": 123})
 
     def test_prepare_template_vars_extra_fields(self, pipeline_args):
         """Test template vars ignores extra fields."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
-        transcription = {"id": "123", "content": "test content", "extra": "ignored"}
+        transcription = {"id": 123, "content": "test content", "extra": "ignored"}
         vars = pipeline._prepare_template_vars(transcription)
         assert vars["transcription"] == "test content"
         assert len(vars["identifier"]) == UUID_SHORT_LENGTH
@@ -421,7 +421,7 @@ Operator: Hello"""
     def test_get_backup_overrides(self, pipeline_args, capsys):
         """Test backup preset override generation."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
-        overrides = pipeline._get_backup_overrides("123")
+        overrides = pipeline._get_backup_overrides(123)
 
         assert overrides == {
             "request_overrides": {
@@ -469,15 +469,15 @@ Operator: Hello"""
         """Test handling AI failure on first attempt."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         # Should not raise on first attempt
-        pipeline._handle_ai_failure("test error", "123", 0)
+        pipeline._handle_ai_failure("test error", 123, 1)
 
     def test_handle_ai_failure_second_attempt(self, pipeline_args):
         """Test handling AI failure on second attempt."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         with pytest.raises(
-            Exception, match="AI model error: No transcript section found"
+            Exception, match="AI model error for transcription 123: No transcript section found"
         ):
-            pipeline._handle_ai_failure("No transcript section found", "123", 1)
+            pipeline._handle_ai_failure("No transcript section found", 123, 2)
 
     def test_process_single_attempt_success(self, pipeline_args, mock_lwe_setup):
         """Test successful single processing attempt."""
@@ -486,9 +486,9 @@ Operator: Hello"""
 
         mock_lwe_setup["backend"].run_template.return_value = (True, "success", None)
 
-        result = pipeline._process_single_attempt({"test": "vars"}, "123", 0)
+        result = pipeline._process_single_attempt({"test": "vars"}, 123, 1)
 
-        assert result == {"id": "123", "labeled_content": "success"}
+        assert result == {"id": 123, "labeled_content": "success"}
         assert not mock_lwe_setup["backend"].run_template.call_args[1]["overrides"]
 
     def test_process_single_attempt_failure(self, pipeline_args, mock_lwe_setup):
@@ -498,7 +498,7 @@ Operator: Hello"""
 
         mock_lwe_setup["backend"].run_template.return_value = (False, None, "error")
 
-        result = pipeline._process_single_attempt({"test": "vars"}, "123", 0)
+        result = pipeline._process_single_attempt({"test": "vars"}, 123, 1)
 
         assert result is None
 
@@ -510,10 +510,10 @@ Operator: Hello"""
         mock_lwe_setup["backend"].run_template.return_value = (True, "success", None)
 
         result = pipeline._process_single_attempt(
-            {"test": "vars"}, "123", 1  # Second attempt
+            {"test": "vars"}, 123, 2
         )
 
-        assert result == {"id": "123", "labeled_content": "success"}
+        assert result == {"id": 123, "labeled_content": "success"}
         # Verify backup preset was used
         overrides = mock_lwe_setup["backend"].run_template.call_args[1]["overrides"]
         assert overrides["request_overrides"]["preset"] == LWE_FALLBACK_PRESET

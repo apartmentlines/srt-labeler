@@ -202,8 +202,8 @@ class SrtLabelerPipeline:
         :param attempt: Current attempt number
         :raises Exception: If max attempts reached
         """
-        if attempt >= 1:  # Max attempts is 2
-            raise Exception(f"AI model error: {error}")
+        if attempt >= 2:
+            raise Exception(f"AI model error for transcription {transcription_id}: {error}")
 
     def _process_single_attempt(
         self, template_vars: Dict, transcription_id: str, attempt: int
@@ -216,7 +216,7 @@ class SrtLabelerPipeline:
         :return: Processing result or None if failed
         """
         overrides = (
-            self._get_backup_overrides(transcription_id) if attempt > 0 else None
+            self._get_backup_overrides(transcription_id) if attempt > 1 else None
         )
         success, response, error = self._run_ai_analysis(template_vars, overrides)
 
@@ -245,10 +245,10 @@ class SrtLabelerPipeline:
         :param transcription: Transcription data to process
         :raises Exception: If AI processing fails
         """
-        self.log.debug(f"Processing transcription {transcription.get('id', 'unknown')}")
+        self.log.debug(f"Processing transcription {transcription["id"]}")
         template_vars = self._prepare_template_vars(transcription)
 
-        for attempt in range(2):
+        for attempt in range(1, 3):
             result = self._process_single_attempt(
                 template_vars, transcription["id"], attempt
             )
