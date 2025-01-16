@@ -7,10 +7,11 @@ from lwe.core.config import Config
 from lwe import ApiBackend
 from srt_labeler.pipeline import (
     SrtLabelerPipeline,
-    APIError,
+    BaseError,
     RequestError,
     AuthenticationError,
     ResponseValidationError,
+    ModelResponseFormattingError,
 )
 from srt_labeler.constants import (
     DEFAULT_LWE_POOL_LIMIT,
@@ -384,7 +385,7 @@ Operator: Hello"""
         )
 
         # Test invalid response
-        with pytest.raises(Exception, match="No transcript section found"):
+        with pytest.raises(ModelResponseFormattingError, match="No transcript section found"):
             pipeline._extract_transcript_section("Invalid response")
 
     def test_prepare_template_vars_basic(self, pipeline_args):
@@ -913,7 +914,7 @@ class TestRequestError:
         message = "Test request error"
         error = RequestError(message)
         assert str(error) == message
-        assert isinstance(error, APIError)  # Should inherit from APIError
+        assert isinstance(error, BaseError)  # Should inherit from BaseError
 
     def test_request_error_with_cause(self):
         """Test RequestError initialization with cause exception."""
@@ -921,18 +922,18 @@ class TestRequestError:
         error = RequestError("Request error occurred", cause)
         assert str(error) == "Request error occurred"
         assert error.__cause__ == cause
-        assert isinstance(error, APIError)
+        assert isinstance(error, BaseError)
 
     def test_request_error_inheritance_chain(self):
         """Test that RequestError properly inherits through the chain."""
         error = RequestError("Test error")
         assert isinstance(error, RequestError)
-        assert isinstance(error, APIError)
+        assert isinstance(error, BaseError)
         assert isinstance(error, Exception)
         # Should be able to catch as any parent
         try:
             raise RequestError("Test error")
-        except APIError as e:
+        except BaseError as e:
             assert isinstance(e, RequestError)
 
     def test_request_error_str_representation(self):
@@ -952,7 +953,7 @@ class TestAuthenticationError:
         message = "Test authentication error"
         error = AuthenticationError(message)
         assert str(error) == message
-        assert isinstance(error, APIError)
+        assert isinstance(error, BaseError)
 
     def test_authentication_error_with_cause(self):
         """Test AuthenticationError initialization with cause exception."""
@@ -960,18 +961,18 @@ class TestAuthenticationError:
         error = AuthenticationError("Auth error occurred", cause)
         assert str(error) == "Auth error occurred"
         assert error.__cause__ == cause
-        assert isinstance(error, APIError)
+        assert isinstance(error, BaseError)
 
     def test_authentication_error_inheritance_chain(self):
         """Test that AuthenticationError properly inherits through the chain."""
         error = AuthenticationError("Test error")
         assert isinstance(error, AuthenticationError)
-        assert isinstance(error, APIError)
+        assert isinstance(error, BaseError)
         assert isinstance(error, Exception)
         # Should be able to catch as any parent
         try:
             raise AuthenticationError("Test error")
-        except APIError as e:
+        except BaseError as e:
             assert isinstance(e, AuthenticationError)
 
     def test_authentication_error_str_representation(self):
@@ -991,7 +992,7 @@ class TestResponseValidationError:
         message = "Test validation error"
         error = ResponseValidationError(message)
         assert str(error) == message
-        assert isinstance(error, APIError)
+        assert isinstance(error, BaseError)
 
     def test_response_validation_error_with_cause(self):
         """Test ResponseValidationError initialization with cause exception."""
@@ -999,18 +1000,18 @@ class TestResponseValidationError:
         error = ResponseValidationError("Validation error occurred", cause)
         assert str(error) == "Validation error occurred"
         assert error.__cause__ == cause
-        assert isinstance(error, APIError)
+        assert isinstance(error, BaseError)
 
     def test_response_validation_error_inheritance_chain(self):
         """Test that ResponseValidationError properly inherits through the chain."""
         error = ResponseValidationError("Test error")
         assert isinstance(error, ResponseValidationError)
-        assert isinstance(error, APIError)
+        assert isinstance(error, BaseError)
         assert isinstance(error, Exception)
         # Should be able to catch as any parent
         try:
             raise ResponseValidationError("Test error")
-        except APIError as e:
+        except BaseError as e:
             assert isinstance(e, ResponseValidationError)
 
     def test_response_validation_error_str_representation(self):
@@ -1024,35 +1025,74 @@ class TestResponseValidationError:
         assert "Root cause" not in error_str
 
 
-class TestAPIError:
+class TestModelResponseFormattingError:
+    def test_model_response_formatting_error_initialization(self):
+        """Test basic ModelResponseFormattingError initialization with message."""
+        message = "Test model response error"
+        error = ModelResponseFormattingError(message)
+        assert str(error) == message
+        assert isinstance(error, BaseError)
+
+    def test_model_response_formatting_error_with_cause(self):
+        """Test ModelResponseFormattingError initialization with cause exception."""
+        cause = ValueError("Original error")
+        error = ModelResponseFormattingError("Validation error occurred", cause)
+        assert str(error) == "Validation error occurred"
+        assert error.__cause__ == cause
+        assert isinstance(error, BaseError)
+
+    def test_model_response_formatting_error_inheritance_chain(self):
+        """Test that ModelResponseFormattingError properly inherits through the chain."""
+        error = ModelResponseFormattingError("Test error")
+        assert isinstance(error, ModelResponseFormattingError)
+        assert isinstance(error, BaseError)
+        assert isinstance(error, Exception)
+        # Should be able to catch as any parent
+        try:
+            raise ModelResponseFormattingError("Test error")
+        except BaseError as e:
+            assert isinstance(e, ModelResponseFormattingError)
+
+    def test_model_response_formatting_error_str_representation(self):
+        """Test string representation includes any cause information."""
+        cause = ValueError("Root cause")
+        error = ModelResponseFormattingError("Validation error", cause)
+        error_str = str(error)
+        assert "Validation error" in error_str
+        # String representation should not include cause
+        # as that's handled by Python's exception chaining
+        assert "Root cause" not in error_str
+
+
+class TestBaseError:
     def test_api_error_initialization(self):
-        """Test basic APIError initialization with message."""
+        """Test basic BaseError initialization with message."""
         message = "Test API error"
-        error = APIError(message)
+        error = BaseError(message)
         assert str(error) == message
         assert isinstance(error, Exception)
 
     def test_api_error_with_cause(self):
-        """Test APIError initialization with cause exception."""
+        """Test BaseError initialization with cause exception."""
         cause = ValueError("Original error")
-        error = APIError("API error occurred", cause)
+        error = BaseError("API error occurred", cause)
         assert str(error) == "API error occurred"
         assert error.__cause__ == cause
 
     def test_api_error_inheritance(self):
-        """Test that APIError properly inherits from Exception."""
-        error = APIError("Test error")
+        """Test that BaseError properly inherits from Exception."""
+        error = BaseError("Test error")
         assert isinstance(error, Exception)
         # Should be able to catch as Exception
         try:
-            raise APIError("Test error")
+            raise BaseError("Test error")
         except Exception as e:
-            assert isinstance(e, APIError)
+            assert isinstance(e, BaseError)
 
     def test_api_error_str_representation(self):
         """Test string representation includes any cause information."""
         cause = ValueError("Root cause")
-        error = APIError("API error", cause)
+        error = BaseError("API error", cause)
         error_str = str(error)
         assert "API error" in error_str
         # String representation should not include cause

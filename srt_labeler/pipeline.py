@@ -18,8 +18,8 @@ from .constants import (
 )
 
 
-class APIError(Exception):
-    """Base exception class for API-related errors."""
+class BaseError(Exception):
+    """Base exception class."""
 
     def __init__(self, message: str, cause: Optional[Exception] = None) -> None:
         """Initialize API error.
@@ -32,7 +32,7 @@ class APIError(Exception):
             self.__cause__ = cause
 
 
-class AuthenticationError(APIError):
+class AuthenticationError(BaseError):
     """Exception raised for authentication-related errors."""
 
     def __init__(self, message: str, cause: Optional[Exception] = None) -> None:
@@ -44,7 +44,7 @@ class AuthenticationError(APIError):
         super().__init__(message, cause)
 
 
-class RequestError(APIError):
+class RequestError(BaseError):
     """Exception raised for errors during request construction or execution."""
 
     def __init__(self, message: str, cause: Optional[Exception] = None) -> None:
@@ -56,11 +56,23 @@ class RequestError(APIError):
         super().__init__(message, cause)
 
 
-class ResponseValidationError(APIError):
+class ResponseValidationError(BaseError):
     """Exception raised for response validation errors."""
 
     def __init__(self, message: str, cause: Optional[Exception] = None) -> None:
         """Initialize response validation error.
+
+        :param message: Error message
+        :param cause: Optional causing exception
+        """
+        super().__init__(message, cause)
+
+
+class ModelResponseFormattingError(BaseError):
+    """Exception raised for model response formatting errors."""
+
+    def __init__(self, message: str, cause: Optional[Exception] = None) -> None:
+        """Initialize model response formatting error.
 
         :param message: Error message
         :param cause: Optional causing exception
@@ -141,7 +153,7 @@ class SrtLabelerPipeline:
 
         match = re.search(r"<transcript>(.*?)</transcript>", response, re.DOTALL)
         if not match:
-            raise Exception("No transcript section found in the text")
+            raise ModelResponseFormattingError("No transcript section found in the text")
         return match.group(1).strip()
 
     def _generate_identifier(self) -> str:
