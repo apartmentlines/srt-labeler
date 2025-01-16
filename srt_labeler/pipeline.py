@@ -205,7 +205,7 @@ class SrtLabelerPipeline:
         )
 
     def _handle_ai_failure(
-        self, error: str, transcription_id: str, attempt: int
+        self, error: Optional[str], transcription_id: str, attempt: int
     ) -> None:
         """Handle AI analysis failure.
 
