@@ -385,7 +385,9 @@ Operator: Hello"""
         )
 
         # Test invalid response
-        with pytest.raises(ModelResponseFormattingError, match="No transcript section found"):
+        with pytest.raises(
+            ModelResponseFormattingError, match="No transcript section found"
+        ):
             pipeline._extract_transcript_section("Invalid response")
 
     def test_prepare_template_vars_basic(self, pipeline_args):
@@ -476,7 +478,8 @@ Operator: Hello"""
         """Test handling AI failure on second attempt."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         with pytest.raises(
-            Exception, match="AI model error for transcription 123: No transcript section found"
+            Exception,
+            match="AI model error for transcription 123: No transcript section found",
         ):
             pipeline._handle_ai_failure("No transcript section found", 123, 2)
 
@@ -510,9 +513,7 @@ Operator: Hello"""
 
         mock_lwe_setup["backend"].run_template.return_value = (True, "success", None)
 
-        result = pipeline._process_single_attempt(
-            {"test": "vars"}, 123, 2
-        )
+        result = pipeline._process_single_attempt({"test": "vars"}, 123, 2)
 
         assert result == {"id": 123, "labeled_content": "success"}
         # Verify backup preset was used
