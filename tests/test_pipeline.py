@@ -12,7 +12,11 @@ from srt_labeler.pipeline import (
     AuthenticationError,
     ResponseValidationError,
     ModelResponseFormattingError,
+    TranscriptionResult,
+    TranscriptionErrorHandler,
+    ApiPayloadBuilder,
 )
+from srt_labeler.merger import SrtMergeError
 from srt_labeler.constants import (
     DEFAULT_LWE_POOL_LIMIT,
     UUID_SHORT_LENGTH,
@@ -78,71 +82,141 @@ class TestSrtLabelerPipeline:
             SrtLabelerPipeline()
 
     def test_process_transcriptions(self, pipeline_args, mock_lwe_setup):
+        """Test processing multiple transcriptions."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
 
         test_transcriptions = [
-            {"id": 1, "content": "test1"},
-            {"id": 2, "content": "test2"},
+            {"id": 1, "transcription": "test1"},
+            {"id": 2, "transcription": "test2"},
+            {"id": 3, "transcription": "test3"},
         ]
 
-        # Mock _process_transcription to track calls
-        with patch.object(pipeline, "_process_transcription") as mock_process:
-            # Test parallel processing
-            pipeline.process_transcriptions(test_transcriptions)
+        with patch.object(pipeline, "_process_with_error_handling") as mock_process:
+            # Mock mixed results including thread error
+            mock_process.side_effect = [
+                TranscriptionResult(
+                    transcription_id=1, success=True, transcription="labeled1"
+                ),
+                Exception("Thread processing error"),  # Simulate thread error
+                TranscriptionResult(
+                    transcription_id=3, success=True, transcription="labeled3"
+                ),
+            ]
 
-            # Verify each transcription was processed
-            assert mock_process.call_count == len(test_transcriptions)
-            # Verify each transcription was passed to _process_transcription
-            mock_process.assert_has_calls(
-                [
-                    call({"id": 1, "content": "test1"}),
-                    call({"id": 2, "content": "test2"}),
-                ],
-                any_order=True,
-            )  # any_order=True because of parallel processing
+            with patch.object(pipeline, "update_transcription") as mock_update:
+                # Capture the futures for verification
+                futures = []
+                with patch.object(
+                    pipeline.executor,
+                    "submit",
+                    side_effect=lambda fn, *args: futures.append(
+                        Mock(result=lambda: fn(*args))
+                    ),
+                ) as mock_submit:
+                    pipeline.process_transcriptions(test_transcriptions)
+
+                    # Verify submissions
+                    assert mock_submit.call_count == len(test_transcriptions)
+
+                    # Verify futures were properly handled
+                    assert len(futures) == len(test_transcriptions)
+
+                    # Verify error propagation
+                    error_logged = False
+                    for future in futures:
+                        try:
+                            future.result()
+                        except Exception as e:
+                            error_logged = True
+                            assert "Thread processing error" in str(e)
+                    assert error_logged
+
+                # Verify successful results were updated
+                assert mock_update.call_count == 2
+                update_calls = [call[0][0] for call in mock_update.call_args_list]
+                assert all(result.success for result in update_calls)
+                assert "labeled1" in update_calls[0].transcription
+                assert "labeled3" in update_calls[1].transcription
 
     def test_process_transcriptions_error_handling(
         self, pipeline_args, mock_lwe_setup, capsys
     ):
+        """Test error handling during transcription processing."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
 
-        # Mock the _process_transcription method to raise an exception
-        with patch.object(
-            pipeline, "_process_transcription", side_effect=Exception("Test error")
-        ):
-            test_transcriptions = [{"id": 1, "content": "test1"}]
+        with patch.object(pipeline, "_process_with_error_handling") as mock_process:
+            mock_process.side_effect = [
+                TranscriptionResult(
+                    transcription_id=1,
+                    success=False,
+                    error=Exception("Transient error"),
+                ),
+                TranscriptionResult(
+                    transcription_id=2,
+                    success=False,
+                    error=ModelResponseFormattingError("Hard error"),
+                ),
+            ]
 
-            # Verify error is logged but doesn't crash pipeline
-            pipeline.process_transcriptions(test_transcriptions)
-            captured = capsys.readouterr()
-            assert "Error processing transcription: Test error" in captured.err
+            with patch.object(pipeline, "update_transcription") as mock_update:
+                test_transcriptions = [
+                    {"id": 1, "transcription": "test1"},
+                    {"id": 2, "transcription": "test2"},
+                ]
+                pipeline.process_transcriptions(test_transcriptions)
+
+                # Verify only hard error triggered API update
+                assert mock_update.call_count == 1
+                result = mock_update.call_args[0][0]
+                assert isinstance(result.error, ModelResponseFormattingError)
+                assert "Hard error" in str(result.error)
 
     def test_process_transcriptions_multiple_errors(
         self, pipeline_args, mock_lwe_setup, capsys
     ):
+        """Test handling of multiple error types."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
 
-        # Mock to raise different exceptions for different transcriptions
         def side_effect(transcription):
             if transcription["id"] == 1:
-                raise ValueError("Value error")
+                return TranscriptionResult(
+                    transcription_id=1,
+                    success=False,
+                    error=SrtMergeError("Hard error"),  # Hard error
+                )
             if transcription["id"] == 2:
-                raise RuntimeError("Runtime error")
+                return TranscriptionResult(
+                    transcription_id=2,
+                    success=False,
+                    error=Exception("Transient error"),  # Transient error
+                )
+            return TranscriptionResult(
+                transcription_id=3, success=True, transcription="Success"
+            )
 
-        with patch.object(pipeline, "_process_transcription", side_effect=side_effect):
-            test_transcriptions = [
-                {"id": 1, "content": "test1"},
-                {"id": 2, "content": "test2"},
-                {"id": 3, "content": "test3"},
-            ]
+        with patch.object(
+            pipeline, "_process_with_error_handling", side_effect=side_effect
+        ):
+            with patch.object(pipeline, "update_transcription") as mock_update:
+                test_transcriptions = [
+                    {"id": 1, "transcription": "test1"},
+                    {"id": 2, "transcription": "test2"},
+                    {"id": 3, "transcription": "test3"},
+                ]
 
-            # Should process all transcriptions despite errors
-            pipeline.process_transcriptions(test_transcriptions)
+                pipeline.process_transcriptions(test_transcriptions)
 
-            # Verify both errors were logged
-            captured = capsys.readouterr()
-            assert "Error processing transcription: Value error" in captured.err
-            assert "Error processing transcription: Runtime error" in captured.err
+                # Verify only success and hard error cases triggered API update
+                assert mock_update.call_count == 2
+                update_calls = [call[0][0] for call in mock_update.call_args_list]
+                assert any(
+                    isinstance(r.error, SrtMergeError)
+                    for r in update_calls
+                    if not r.success
+                )
+                assert any(
+                    r.success and r.transcription == "Success" for r in update_calls
+                )
 
     def test_thread_pool_cleanup(self, pipeline_args, mock_lwe_setup):
         """Test that thread pool is properly shut down when cleanup is called."""
@@ -170,7 +244,7 @@ class TestSrtLabelerPipeline:
 
         # Create more transcriptions than worker threads
         test_transcriptions = [
-            {"id": i, "content": f"test{i}"}
+            {"id": i, "transcription": f"test{i}"}
             for i in range(DEFAULT_LWE_POOL_LIMIT * 2)  # Double the pool size
         ]
 
@@ -222,23 +296,23 @@ Operator: Hello world
             None,
         )
 
-        # Mock _handle_successful_labeling
-        with patch.object(pipeline, "_handle_successful_labeling") as mock_handle:
-            transcription = {
-                "id": 1,
-                "content": """1
+        transcription = {
+            "id": 1,
+            "transcription": """1
 00:00:01,000 --> 00:00:02,000
 Hello world""",
-            }
+        }
 
+        with patch.object(pipeline, "update_transcription") as mock_update:
             pipeline._process_transcription(transcription)
 
-            # Verify _handle_successful_labeling was called with correct data
-            mock_handle.assert_called_once()
-            call_args = mock_handle.call_args[0]
-            assert call_args[0] == transcription
-            assert call_args[1]["id"] == 1
-            mock_lwe_setup["backend"].run_template.assert_called_once()
+            # Verify update was called with successful result
+            mock_update.assert_called_once()
+            result = mock_update.call_args[0][0]
+            assert isinstance(result, TranscriptionResult)
+            assert result.success is True
+            assert result.transcription_id == 1
+            assert "Operator: Hello world" in result.transcription
 
     def test_process_transcription_backup_preset(self, pipeline_args, mock_lwe_setup):
         """Test fallback to backup preset after failures."""
@@ -263,11 +337,10 @@ Operator: Hello world
 
         transcription = {
             "id": 1,
-            "content": "1\n00:00:01,000 --> 00:00:02,000\nHello world\n",
+            "transcription": "1\n00:00:01,000 --> 00:00:02,000\nHello world\n",
         }
 
-        # Mock _handle_successful_labeling
-        with patch.object(pipeline, "_handle_successful_labeling") as mock_handle:
+        with patch.object(pipeline, "update_transcription") as mock_update:
             pipeline._process_transcription(transcription)
 
             # Verify backup preset was used and handling occurred
@@ -276,92 +349,14 @@ Operator: Hello world
             assert "preset" in last_call_args[1].get("overrides", {}).get(
                 "request_overrides", {}
             )
-            mock_handle.assert_called_once()
 
-    def test_handle_successful_labeling(self, pipeline_args):
-        """Test successful handling of AI labeling result."""
-        pipeline = SrtLabelerPipeline(**pipeline_args)
-
-        transcription = {
-            "id": 123,
-            "content": "1\n00:00:01,000 --> 00:00:02,000\nHello world\n",
-        }
-
-        result = {
-            "id": 123,
-            "labeled_content": """<thinking>Analysis</thinking>
-<transcript>
-1
-00:00:01,000 --> 00:00:02,000
-Operator: Hello world
-</transcript>""",
-        }
-
-        with patch.multiple(
-            pipeline,
-            update_transcription=Mock(),
-            _merge_srt_content=Mock(return_value="merged content"),
-        ):
-            pipeline._handle_successful_labeling(transcription, result)
-
-            # Verify content was merged and API was updated
-            pipeline._merge_srt_content.assert_called_once()
-            pipeline.update_transcription.assert_called_once_with(
-                123, {"id": 123, "labeled_content": "merged content"}
-            )
-
-    def test_handle_successful_labeling_merge_error(self, pipeline_args):
-        """Test handling of merge errors during successful labeling."""
-        pipeline = SrtLabelerPipeline(**pipeline_args)
-
-        transcription = {"id": 123, "content": "invalid content"}
-
-        result = {
-            "id": 123,
-            "labeled_content": "<transcript>invalid content</transcript>",
-        }
-
-        with patch.object(
-            pipeline, "_merge_srt_content", side_effect=Exception("Merge failed")
-        ):
-            with pytest.raises(Exception) as exc_info:
-                pipeline._handle_successful_labeling(transcription, result)
-            assert "Merge failed" in str(exc_info.value)
-
-    def test_handle_successful_labeling_api_update_error(self, pipeline_args):
-        """Test handling of API update errors during successful labeling."""
-        pipeline = SrtLabelerPipeline(**pipeline_args)
-
-        transcription = {"id": 123, "content": "valid content"}
-
-        result = {
-            "id": 123,
-            "labeled_content": "<transcript>valid content</transcript>",
-        }
-
-        with patch.multiple(
-            pipeline,
-            _merge_srt_content=Mock(return_value="merged content"),
-            update_transcription=Mock(side_effect=RequestError("API update failed")),
-        ):
-            with pytest.raises(RequestError) as exc_info:
-                pipeline._handle_successful_labeling(transcription, result)
-            assert "API update failed" in str(exc_info.value)
-
-    def test_handle_successful_labeling_extract_error(self, pipeline_args):
-        """Test handling of transcript extraction errors during successful labeling."""
-        pipeline = SrtLabelerPipeline(**pipeline_args)
-
-        transcription = {"id": 123, "content": "valid content"}
-
-        result = {
-            "id": 123,
-            "labeled_content": "invalid transcript format",  # Missing transcript tags
-        }
-
-        with pytest.raises(Exception) as exc_info:
-            pipeline._handle_successful_labeling(transcription, result)
-        assert "No transcript section found" in str(exc_info.value)
+            # Verify successful result was updated
+            mock_update.assert_called_once()
+            result = mock_update.call_args[0][0]
+            assert isinstance(result, TranscriptionResult)
+            assert result.success is True
+            assert result.transcription_id == 1
+            assert "Operator: Hello world" in result.transcription
 
     def test_extract_transcript_section(self, pipeline_args):
         """Test extraction of transcript section from AI response."""
@@ -385,15 +380,19 @@ Operator: Hello"""
         )
 
         # Test invalid response
-        with pytest.raises(
-            ModelResponseFormattingError, match="No transcript section found"
-        ):
+        with pytest.raises(ModelResponseFormattingError) as exc_info:
             pipeline._extract_transcript_section("Invalid response")
+        assert "No transcript section found" in str(exc_info.value)
+
+        # Test None response
+        with pytest.raises(ModelResponseFormattingError) as exc_info:
+            pipeline._extract_transcript_section(None)
+        assert "No response provided" in str(exc_info.value)
 
     def test_prepare_template_vars_basic(self, pipeline_args):
         """Test basic template variable preparation."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
-        transcription = {"id": 123, "content": "test content"}
+        transcription = {"id": 123, "transcription": "test content"}
         vars = pipeline._prepare_template_vars(transcription)
         assert vars["transcription"] == "test content"
         assert len(vars["identifier"]) == UUID_SHORT_LENGTH
@@ -407,7 +406,7 @@ Operator: Hello"""
     def test_prepare_template_vars_extra_fields(self, pipeline_args):
         """Test template vars ignores extra fields."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
-        transcription = {"id": 123, "content": "test content", "extra": "ignored"}
+        transcription = {"id": 123, "transcription": "test content", "extra": "ignored"}
         vars = pipeline._prepare_template_vars(transcription)
         assert vars["transcription"] == "test content"
         assert len(vars["identifier"]) == UUID_SHORT_LENGTH
@@ -444,7 +443,9 @@ Operator: Hello"""
         success, response, error = pipeline._run_ai_analysis({"test": "vars"})
 
         mock_lwe_setup["backend"].run_template.assert_called_once_with(
-            "transcription-srt-labeling", template_vars={"test": "vars"}, overrides=None
+            "transcription-srt-labeling.md",
+            template_vars={"test": "vars"},
+            overrides=None,
         )
         assert success
         assert response == "response"
@@ -463,81 +464,35 @@ Operator: Hello"""
         )
 
         mock_lwe_setup["backend"].run_template.assert_called_once_with(
-            "transcription-srt-labeling",
+            "transcription-srt-labeling.md",
             template_vars={"test": "vars"},
             overrides=test_overrides,
         )
-
-    def test_handle_ai_failure_first_attempt(self, pipeline_args):
-        """Test handling AI failure on first attempt."""
-        pipeline = SrtLabelerPipeline(**pipeline_args)
-        # Should not raise on first attempt
-        pipeline._handle_ai_failure("test error", 123, 1)
-
-    def test_handle_ai_failure_second_attempt(self, pipeline_args):
-        """Test handling AI failure on second attempt."""
-        pipeline = SrtLabelerPipeline(**pipeline_args)
-        with pytest.raises(
-            Exception,
-            match="AI model error for transcription 123: No transcript section found",
-        ):
-            pipeline._handle_ai_failure("No transcript section found", 123, 2)
-
-    def test_process_single_attempt_success(self, pipeline_args, mock_lwe_setup):
-        """Test successful single processing attempt."""
-        pipeline = SrtLabelerPipeline(**pipeline_args)
-        pipeline._initialize_worker()
-
-        mock_lwe_setup["backend"].run_template.return_value = (True, "success", None)
-
-        result = pipeline._process_single_attempt({"test": "vars"}, 123, 1)
-
-        assert result == {"id": 123, "labeled_content": "success"}
-        assert not mock_lwe_setup["backend"].run_template.call_args[1]["overrides"]
-
-    def test_process_single_attempt_failure(self, pipeline_args, mock_lwe_setup):
-        """Test failed single processing attempt."""
-        pipeline = SrtLabelerPipeline(**pipeline_args)
-        pipeline._initialize_worker()
-
-        mock_lwe_setup["backend"].run_template.return_value = (False, None, "error")
-
-        result = pipeline._process_single_attempt({"test": "vars"}, 123, 1)
-
-        assert result is None
-
-    def test_process_single_attempt_with_backup(self, pipeline_args, mock_lwe_setup):
-        """Test processing attempt with backup preset."""
-        pipeline = SrtLabelerPipeline(**pipeline_args)
-        pipeline._initialize_worker()
-
-        mock_lwe_setup["backend"].run_template.return_value = (True, "success", None)
-
-        result = pipeline._process_single_attempt({"test": "vars"}, 123, 2)
-
-        assert result == {"id": 123, "labeled_content": "success"}
-        # Verify backup preset was used
-        overrides = mock_lwe_setup["backend"].run_template.call_args[1]["overrides"]
-        assert overrides["request_overrides"]["preset"] == LWE_FALLBACK_PRESET
 
     def test_empty_transcription_content(self, pipeline_args, mock_lwe_setup):
         """Test handling of empty transcription content."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         pipeline._initialize_worker()
+        transcription = {"id": 123, "transcription": ""}
+        result = pipeline._process_with_error_handling(transcription)
 
-        transcription = {"id": "123", "content": ""}
+        assert isinstance(result, TranscriptionResult)
+        assert result.transcription_id == 123
+        assert result.success is False
+        assert isinstance(result.error, ModelResponseFormattingError)
+        assert "No transcript section found" in str(result.error)
 
-        mock_lwe_setup["backend"].run_template.return_value = (True, "success", None)
-        with pytest.raises(Exception, match="No transcript section found in the text"):
-            pipeline._process_transcription(transcription)
-
-    def test_malformed_transcription(self, pipeline_args):
+    def test_malformed_transcription(self, pipeline_args, mock_lwe_setup):
         """Test handling of malformed transcription data."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
+        pipeline._initialize_worker()
+        malformed = {"id": 123, "transcription": "bad data"}
+        result = pipeline._process_with_error_handling(malformed)
 
-        malformed = {"bad": "data"}
-        with pytest.raises(KeyError):
-            pipeline._process_transcription(malformed)
+        assert isinstance(result, TranscriptionResult)
+        assert result.transcription_id == 123
+        assert result.success is False
+        assert isinstance(result.error, ModelResponseFormattingError)
 
     def test_merge_srt_content_success(self, pipeline_args):
         """Test successful merging of original and AI-labeled SRT content."""
@@ -631,73 +586,30 @@ invalid: Hello world"""
         expected_url = f"https://{pipeline_args['domain']}/al/transcriptions/update/operator-recording"
         assert pipeline.build_update_url() == expected_url
 
-    def test_build_base_payload(self, pipeline_args):
-        """Test construction of base payload for API requests."""
-        pipeline = SrtLabelerPipeline(**pipeline_args)
-        transcription_id = "test123"
+    def test_api_payload_builder(self, pipeline_args):
+        """Test ApiPayloadBuilder functionality."""
+        builder = ApiPayloadBuilder(pipeline_args["api_key"])
 
-        payload = pipeline._build_base_payload(transcription_id)
+        # Test successful result payload
+        success_result = TranscriptionResult(
+            transcription_id=123, success=True, transcription="test content"
+        )
+        success_payload = builder.build_payload(success_result)
+        assert success_payload["api_key"] == pipeline_args["api_key"]
+        assert success_payload["id"] == 123
+        assert success_payload["success"] is True
+        assert success_payload["transcription"] == "test content"
 
-        assert payload == {
-            "api_key": pipeline_args["api_key"],
-            "id": transcription_id,
-            "success": True,
-            "transcription_state": TRANSCRIPTION_STATE_COMPLETE,
-        }
-
-    def test_add_labeling_result(self, pipeline_args):
-        """Test adding labeling result to base payload."""
-        pipeline = SrtLabelerPipeline(**pipeline_args)
-        base_payload = {
-            "api_key": pipeline_args["api_key"],
-            "id": "test123",
-            "success": True,
-            "transcription_state": TRANSCRIPTION_STATE_COMPLETE,
-        }
-        result = {
-            "id": "test123",
-            "labeled_content": "1\n00:00:01,000 --> 00:00:02,000\nOperator: Hello\n\n",
-        }
-
-        payload = pipeline._add_labeling_result(base_payload, result)
-
-        assert payload == {
-            "api_key": pipeline_args["api_key"],
-            "id": "test123",
-            "success": True,
-            "transcription_state": TRANSCRIPTION_STATE_COMPLETE,
-            "content": "1\n00:00:01,000 --> 00:00:02,000\nOperator: Hello\n\n",
-        }
-
-    def test_add_labeling_result_validates_content(self, pipeline_args):
-        """Test validation of labeling result content."""
-        pipeline = SrtLabelerPipeline(**pipeline_args)
-        base_payload = pipeline._build_base_payload("test123")
-
-        # Test with missing labeled_content
-        invalid_result = {"id": "test123"}
-        with pytest.raises(ResponseValidationError) as exc_info:
-            pipeline._add_labeling_result(base_payload, invalid_result)
-        assert "Missing labeled_content in result" in str(exc_info.value)
-
-        # Test with empty labeled_content
-        invalid_result = {"id": "test123", "labeled_content": ""}
-        with pytest.raises(ResponseValidationError) as exc_info:
-            pipeline._add_labeling_result(base_payload, invalid_result)
-        assert "Empty labeled_content in result" in str(exc_info.value)
-
-    def test_add_labeling_result_validates_id_match(self, pipeline_args):
-        """Test validation of ID matching between payload and result."""
-        pipeline = SrtLabelerPipeline(**pipeline_args)
-        base_payload = pipeline._build_base_payload("test123")
-        result = {
-            "id": "different_id",
-            "labeled_content": "1\n00:00:01,000 --> 00:00:02,000\nOperator: Hello\n\n",
-        }
-
-        with pytest.raises(ResponseValidationError) as exc_info:
-            pipeline._add_labeling_result(base_payload, result)
-        assert "Result ID does not match payload ID" in str(exc_info.value)
+        # Test error result payload
+        error_result = TranscriptionResult(
+            transcription_id=456, success=False, error=Exception("Test error")
+        )
+        error_payload = builder.build_payload(error_result)
+        assert error_payload["api_key"] == pipeline_args["api_key"]
+        assert error_payload["id"] == 456
+        assert error_payload["success"] is True
+        assert "error_stage" in error_payload
+        assert "Test error" in error_payload["error"]
 
     def test_handle_update_response_success(self, pipeline_args):
         """Test successful API response handling."""
@@ -824,11 +736,9 @@ invalid: Hello world"""
     def test_update_transcription_success(self, pipeline_args):
         """Test successful transcription update."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
-        transcription_id = "test123"
-        result = {
-            "id": transcription_id,
-            "labeled_content": "1\n00:00:01,000 --> 00:00:02,000\nOperator: Hello\n\n",
-        }
+        result = TranscriptionResult(
+            transcription_id=123, success=True, transcription="test content"
+        )
 
         with patch.multiple(
             pipeline,
@@ -836,63 +746,295 @@ invalid: Hello world"""
             _execute_update_request=Mock(),
             _handle_update_response=Mock(),
         ):
-
-            pipeline.update_transcription(transcription_id, result)
+            pipeline.update_transcription(result)
 
             # Verify the flow
             pipeline.build_update_url.assert_called_once()
             pipeline._execute_update_request.assert_called_once()
             pipeline._handle_update_response.assert_called_once()
 
-            # Verify payload construction
-            call_args = pipeline._execute_update_request.call_args[0]
-            assert call_args[0] == "https://test.com/update"  # URL
-            assert call_args[1]["api_key"] == pipeline_args["api_key"]
-            assert call_args[1]["id"] == transcription_id
-            assert call_args[1]["content"] == result["labeled_content"]
-
     def test_update_transcription_request_error(self, pipeline_args):
         """Test handling of request error during update."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
-        transcription_id = "test123"
-        result = {
-            "id": transcription_id,
-            "labeled_content": "1\n00:00:01,000 --> 00:00:02,000\nOperator: Hello\n\n",
-        }
+        result = TranscriptionResult(
+            transcription_id=123, success=True, transcription="test content"
+        )
 
         with patch.multiple(
             pipeline,
             build_update_url=Mock(return_value="https://test.com/update"),
             _execute_update_request=Mock(side_effect=RequestError("Network error")),
         ):
-
             with pytest.raises(RequestError) as exc_info:
-                pipeline.update_transcription(transcription_id, result)
-
+                pipeline.update_transcription(result)
             assert "Network error" in str(exc_info.value)
 
     def test_update_transcription_validation_error(self, pipeline_args):
         """Test handling of validation error during update."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
-        transcription_id = "test123"
-        result = {
-            "id": "different_id",  # Mismatched ID
-            "labeled_content": "1\n00:00:01,000 --> 00:00:02,000\nOperator: Hello\n\n",
+        result = TranscriptionResult(
+            transcription_id=123, success=True, transcription="test content"
+        )
+
+        with patch.multiple(
+            pipeline,
+            build_update_url=Mock(return_value="https://test.com/update"),
+            _execute_update_request=Mock(),
+            _handle_update_response=Mock(
+                side_effect=ResponseValidationError("Validation failed")
+            ),
+        ):
+            with pytest.raises(ResponseValidationError) as exc_info:
+                pipeline.update_transcription(result)
+            assert "Validation failed" in str(exc_info.value)
+
+    def test_execute_model_analysis_success(self, pipeline_args, mock_lwe_setup):
+        """Test successful model analysis execution."""
+        pipeline = SrtLabelerPipeline(**pipeline_args)
+        pipeline._initialize_worker()
+
+        # Mock successful response
+        mock_lwe_setup["backend"].run_template.return_value = (
+            True,
+            """
+<thinking>Analysis</thinking>
+<transcript>
+1
+00:00:01,000 --> 00:00:02,000
+Operator: Test content
+</transcript>""",
+            None,
+        )
+
+        transcription = {
+            "id": 123,
+            "transcription": """1
+00:00:01,000 --> 00:00:02,000
+Test content""",
         }
 
-        with pytest.raises(ResponseValidationError) as exc_info:
-            pipeline.update_transcription(transcription_id, result)
+        result = pipeline._execute_model_analysis(transcription, False)
+        assert result.success is True
+        assert result.transcription_id == 123
+        assert result.transcription and "Operator: Test content" in result.transcription
 
-        assert "Result ID does not match payload ID" in str(exc_info.value)
+    def test_execute_model_analysis_failure(self, pipeline_args, mock_lwe_setup):
+        """Test model analysis execution failure."""
+        pipeline = SrtLabelerPipeline(**pipeline_args)
+        pipeline._initialize_worker()
+
+        # Mock failed response
+        mock_lwe_setup["backend"].run_template.return_value = (
+            False,
+            None,
+            "Model error",
+        )
+
+        transcription = {"id": 123, "transcription": "test"}
+        result = pipeline._execute_model_analysis(transcription, False)
+
+        assert result.success is False
+        assert result.transcription_id == 123
+        assert "Model error" in str(result.error)
+
+    def test_create_model_failure_result(self, pipeline_args):
+        """Test creation of model failure result."""
+        pipeline = SrtLabelerPipeline(**pipeline_args)
+
+        # Test with error message
+        result = pipeline._create_model_failure_result(123, "Test error")
+        assert result.transcription_id == 123
+        assert result.success is False
+        assert "Test error" in str(result.error)
+
+        # Test with None error message
+        result = pipeline._create_model_failure_result(123, None)
+        assert result.transcription_id == 123
+        assert result.success is False
+        assert "AI analysis failed" in str(result.error)
+
+    def test_process_model_response_success(self, pipeline_args):
+        """Test successful processing of model response."""
+        pipeline = SrtLabelerPipeline(**pipeline_args)
+
+        original_content = """1
+00:00:01,000 --> 00:00:02,000
+Hello world"""
+
+        model_response = """
+<thinking>Analysis</thinking>
+<transcript>
+1
+00:00:01,000 --> 00:00:02,000
+Operator: Hello world
+</transcript>"""
+
+        result = pipeline._process_model_response(123, original_content, model_response)
+        assert result.success is True
+        assert result.transcription_id == 123
+        assert result.transcription and "Operator: Hello world" in result.transcription
+
+    def test_process_model_response_extraction_error(self, pipeline_args):
+        """Test handling of transcript extraction error."""
+        pipeline = SrtLabelerPipeline(**pipeline_args)
+
+        result = pipeline._process_model_response(
+            123, "test content", "invalid response"
+        )
+        assert result.success is False
+        assert result.transcription_id == 123
+        assert isinstance(result.error, ModelResponseFormattingError)
+
+    def test_process_model_response_merge_error(self, pipeline_args):
+        """Test handling of merge error."""
+        pipeline = SrtLabelerPipeline(**pipeline_args)
+
+        model_response = """
+<thinking>Analysis</thinking>
+<transcript>
+Invalid SRT format
+</transcript>"""
+
+        result = pipeline._process_model_response(123, "test content", model_response)
+        assert result.success is False
+        assert result.transcription_id == 123
+        assert "Failed to merge SRT content" in str(result.error)
+
+    def test_process_transcription_direct(self, pipeline_args, mock_lwe_setup):
+        """Test direct processing of a single transcription."""
+        pipeline = SrtLabelerPipeline(**pipeline_args)
+        pipeline._initialize_worker()
+
+        transcription = {"id": 123, "transcription": "test content"}
+
+        # Mock the internal methods
+        with patch.multiple(
+            pipeline,
+            _process_with_error_handling=Mock(
+                return_value=TranscriptionResult(
+                    transcription_id=123,
+                    success=True,
+                    transcription="processed content",
+                )
+            ),
+            update_transcription=Mock(),
+        ):
+            pipeline._process_transcription(transcription)
+
+            # Verify internal method calls
+            pipeline._process_with_error_handling.assert_called_once_with(transcription)
+            pipeline.update_transcription.assert_called_once()
+
+    def test_update_transcription_direct(self, pipeline_args):
+        """Test direct update of a transcription result."""
+        pipeline = SrtLabelerPipeline(**pipeline_args)
+        result = TranscriptionResult(
+            transcription_id=123, success=True, transcription="test content"
+        )
+
+        with patch.multiple(
+            pipeline,
+            build_update_url=Mock(return_value="test_url"),
+            _execute_update_request=Mock(),
+            _handle_update_response=Mock(),
+        ):
+            pipeline.update_transcription(result)
+
+            # Verify the exact flow
+            pipeline.build_update_url.assert_called_once()
+            pipeline._execute_update_request.assert_called_once()
+            pipeline._handle_update_response.assert_called_once()
+
+    def test_attempt_model_processing_direct(self, pipeline_args):
+        """Test direct model processing attempt."""
+        pipeline = SrtLabelerPipeline(**pipeline_args)
+        transcription = {"id": 123, "transcription": "test"}
+
+        # Test successful case
+        with patch.object(
+            pipeline,
+            "_execute_model_analysis",
+            return_value=TranscriptionResult(
+                transcription_id=123, success=True, transcription="success"
+            ),
+        ):
+            result = pipeline._attempt_model_processing(transcription)
+            assert result.success is True
+            assert result.transcription == "success"
+
+        # Test error case
+        with patch.object(
+            pipeline, "_execute_model_analysis", side_effect=Exception("test error")
+        ):
+            result = pipeline._attempt_model_processing(transcription)
+            assert result.success is False
+            assert "test error" in str(result.error)
+
+    def test_run_model_with_template_direct(self, pipeline_args, mock_lwe_setup):
+        """Test direct template execution."""
+        pipeline = SrtLabelerPipeline(**pipeline_args)
+        pipeline._initialize_worker()
+
+        transcription = {"id": 123, "transcription": "test"}
+
+        with patch.multiple(
+            pipeline,
+            _prepare_template_vars=Mock(return_value={"test": "vars"}),
+            _get_backup_overrides=Mock(return_value={"test": "override"}),
+            _run_ai_analysis=Mock(return_value=(True, "response", None)),
+        ):
+            # Test without fallback
+            success, response, error = pipeline._run_model_with_template(
+                transcription, False
+            )
+            pipeline._prepare_template_vars.assert_called_once_with(transcription)
+            pipeline._get_backup_overrides.assert_not_called()
+
+            # Test with fallback
+            success, response, error = pipeline._run_model_with_template(
+                transcription, True
+            )
+            pipeline._get_backup_overrides.assert_called_once_with(123)
+
+    def test_process_with_error_handling_direct(self, pipeline_args):
+        """Test direct error handling process."""
+        pipeline = SrtLabelerPipeline(**pipeline_args)
+        transcription = {"id": 123, "transcription": "test"}
+
+        # Test successful primary attempt
+        with patch.object(
+            pipeline,
+            "_attempt_model_processing",
+            return_value=TranscriptionResult(
+                transcription_id=123, success=True, transcription="success"
+            ),
+        ):
+            result = pipeline._process_with_error_handling(transcription)
+            assert result.success is True
+            assert result.transcription == "success"
+
+        # Test fallback after primary failure
+        primary_error = TranscriptionResult(
+            transcription_id=123, success=False, error=Exception("primary error")
+        )
+        fallback_success = TranscriptionResult(
+            transcription_id=123, success=True, transcription="fallback success"
+        )
+        with patch.object(
+            pipeline,
+            "_attempt_model_processing",
+            side_effect=[primary_error, fallback_success],
+        ):
+            result = pipeline._process_with_error_handling(transcription)
+            assert result.success is True
+            assert result.transcription == "fallback success"
 
     def test_update_transcription_auth_error(self, pipeline_args):
         """Test handling of authentication error during update."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
-        transcription_id = "test123"
-        result = {
-            "id": transcription_id,
-            "labeled_content": "1\n00:00:01,000 --> 00:00:02,000\nOperator: Hello\n\n",
-        }
+        result = TranscriptionResult(
+            transcription_id=123, success=True, transcription="test content"
+        )
 
         with patch.multiple(
             pipeline,
@@ -902,10 +1044,8 @@ invalid: Hello world"""
                 side_effect=AuthenticationError("Invalid API key")
             ),
         ):
-
             with pytest.raises(AuthenticationError) as exc_info:
-                pipeline.update_transcription(transcription_id, result)
-
+                pipeline.update_transcription(result)
             assert "Invalid API key" in str(exc_info.value)
 
 
@@ -1063,6 +1203,106 @@ class TestModelResponseFormattingError:
         # String representation should not include cause
         # as that's handled by Python's exception chaining
         assert "Root cause" not in error_str
+
+
+class TestTranscriptionErrorHandler:
+    """Test suite for TranscriptionErrorHandler class."""
+
+    def test_is_hard_error_classification(self):
+        """Test error classification logic."""
+        handler = TranscriptionErrorHandler()
+
+        # Test hard errors
+        assert handler.is_hard_error(SrtMergeError("test")) is True
+        assert handler.is_hard_error(ModelResponseFormattingError("test")) is True
+
+        # Test transient errors
+        assert handler.is_hard_error(Exception("test")) is False
+        assert handler.is_hard_error(ValueError("test")) is False
+
+    def test_should_update_with_error_both_hard(self):
+        """Test update decision when both errors are hard."""
+        handler = TranscriptionErrorHandler()
+        primary = SrtMergeError("test")
+        fallback = ModelResponseFormattingError("test")
+        assert handler.should_update_with_error(primary, fallback) is True
+
+    def test_should_update_with_error_mixed(self):
+        """Test update decision with mixed error types."""
+        handler = TranscriptionErrorHandler()
+
+        # One hard, one transient
+        assert (
+            handler.should_update_with_error(SrtMergeError("test"), Exception("test"))
+            is False
+        )
+
+        # One None
+        assert handler.should_update_with_error(SrtMergeError("test"), None) is False
+
+    def test_create_error_result(self):
+        """Test error result creation."""
+        handler = TranscriptionErrorHandler()
+        error = Exception("test error")
+        result = handler.create_error_result(123, error)
+
+        assert isinstance(result, TranscriptionResult)
+        assert result.transcription_id == 123
+        assert result.success is False
+        assert result.error == error
+
+
+class TestTranscriptionResult:
+    """Test suite for TranscriptionResult class."""
+
+    def test_requires_api_update_success(self):
+        """Test requires_api_update property with successful result."""
+        result = TranscriptionResult(
+            transcription_id=1, success=True, transcription="test"
+        )
+        assert result.requires_api_update is True
+
+    def test_requires_api_update_transient_error(self):
+        """Test requires_api_update property with transient error."""
+        result = TranscriptionResult(
+            transcription_id=1, success=False, error=Exception("Transient error")
+        )
+        assert result.requires_api_update is False
+
+    def test_requires_api_update_hard_error(self):
+        """Test requires_api_update property with hard error."""
+        result = TranscriptionResult(
+            transcription_id=1, success=False, error=SrtMergeError("Hard error")
+        )
+        assert result.requires_api_update is True
+
+    def test_is_hard_error_no_error(self):
+        """Test is_hard_error with no error."""
+        result = TranscriptionResult(transcription_id=1, success=True)
+        assert result.is_hard_error() is False
+
+    def test_is_hard_error_transient(self):
+        """Test is_hard_error with transient error."""
+        result = TranscriptionResult(
+            transcription_id=1, success=False, error=Exception("Transient")
+        )
+        assert result.is_hard_error() is False
+
+    def test_is_hard_error_hard(self):
+        """Test is_hard_error with hard error types."""
+        # Test SrtMergeError
+        result = TranscriptionResult(
+            transcription_id=1, success=False, error=SrtMergeError("Hard")
+        )
+        assert result.is_hard_error() is True
+
+        # Test ModelResponseFormattingError
+        result = TranscriptionResult(
+            transcription_id=1,
+            success=False,
+            error=ModelResponseFormattingError("Hard"),
+        )
+        assert result.is_hard_error() is True
 
 
 class TestBaseError:

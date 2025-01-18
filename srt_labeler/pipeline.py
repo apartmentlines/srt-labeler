@@ -1,14 +1,16 @@
 import os
+import re
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Dict, Optional
+from dataclasses import dataclass
 import requests
 from .utils import post_request
 from lwe.core.config import Config
 from lwe import ApiBackend
 from .logger import Logger
-from .merger import SrtMerger
+from .merger import SrtMerger, SrtMergeError
 from .constants import (
     LWE_DEFAULT_PRESET,
     LWE_FALLBACK_PRESET,
@@ -16,6 +18,106 @@ from .constants import (
     UUID_SHORT_LENGTH,
     TRANSCRIPTION_STATE_COMPLETE,
 )
+
+
+@dataclass
+class TranscriptionResult:
+    """Represents the result of a transcription processing attempt."""
+
+    transcription_id: int
+    success: bool  # Indicates if labeling succeeded, not API success
+    transcription: Optional[str] = None
+    error: Optional[Exception] = None
+
+    @property
+    def requires_api_update(self) -> bool:
+        """Determine if this result should trigger an API update.
+
+        :return: True if result requires API update (success or double hard error)
+        """
+        if self.success:
+            return True
+        return self.is_hard_error()
+
+    def is_hard_error(self) -> bool:
+        """Check if the error is classified as hard.
+
+        :return: True if error is a hard error type
+        """
+        if not self.error:
+            return False
+        return isinstance(self.error, (SrtMergeError, ModelResponseFormattingError))
+
+
+class TranscriptionErrorHandler:
+    """Handles error classification and processing decisions."""
+
+    def is_hard_error(self, error: Exception) -> bool:
+        """Classify if an error is 'hard' or 'transient'.
+
+        :param error: Exception to classify
+        :return: True if error is considered a hard error
+        """
+        return isinstance(error, (SrtMergeError, ModelResponseFormattingError))
+
+    def should_update_with_error(
+        self, primary_error: Optional[Exception], fallback_error: Optional[Exception]
+    ) -> bool:
+        """Determine if we should send error state to API.
+
+        :param primary_error: Error from primary model attempt
+        :param fallback_error: Error from fallback model attempt
+        :return: True if both errors are hard errors
+        """
+        if primary_error is None or fallback_error is None:
+            return False
+        return self.is_hard_error(primary_error) and self.is_hard_error(fallback_error)
+
+    def create_error_result(
+        self, transcription_id: int, error: Exception
+    ) -> TranscriptionResult:
+        """Create a TranscriptionResult for an error case.
+
+        :param transcription_id: ID of the transcription
+        :param error: The error that occurred
+        :return: TranscriptionResult representing the error
+        """
+        return TranscriptionResult(
+            transcription_id=transcription_id, success=False, error=error
+        )
+
+
+class ApiPayloadBuilder:
+    """Builds API payloads from TranscriptionResults."""
+
+    def __init__(self, api_key: str):
+        """Initialize the payload builder.
+
+        :param api_key: API key for authentication
+        """
+        self.api_key = api_key
+
+    def build_payload(self, result: TranscriptionResult) -> dict:
+        """Convert TranscriptionResult to API payload format.
+
+        Always sets success=True in payload as it indicates
+        successful completion of processing, not success/failure
+        of labeling.
+
+        :param result: TranscriptionResult to convert
+        :return: Dictionary formatted for API submission
+        """
+        base_payload = {
+            "api_key": self.api_key,
+            "id": result.transcription_id,
+            "success": True,  # Always True for API updates
+            "transcription_state": TRANSCRIPTION_STATE_COMPLETE,
+        }
+
+        if result.success:
+            return {**base_payload, "transcription": result.transcription}
+
+        return {**base_payload, "error_stage": "labeling", "error": str(result.error)}
 
 
 class BaseError(Exception):
@@ -104,6 +206,10 @@ class SrtLabelerPipeline:
         self.domain = domain
         self.debug = debug
 
+        # Initialize handlers
+        self.error_handler = TranscriptionErrorHandler()
+        self.payload_builder = ApiPayloadBuilder(api_key)
+
         # Thread-local storage for LWE backends
         self.thread_local = threading.local()
 
@@ -142,18 +248,20 @@ class SrtLabelerPipeline:
         """Initialize worker thread with its own LWE backend."""
         self.thread_local.backend = self._initialize_lwe_backend()
 
-    def _extract_transcript_section(self, response: str) -> str:
+    def _extract_transcript_section(self, response: str | None) -> str:
         """Extract the transcript section from AI response.
 
         :param response: Full AI response text
         :return: Extracted transcript content
         :raises Exception: If transcript section not found
         """
-        import re
-
+        if not response:
+            raise ModelResponseFormattingError("No response provided")
         match = re.search(r"<transcript>(.*?)</transcript>", response, re.DOTALL)
         if not match:
-            raise ModelResponseFormattingError("No transcript section found in the text")
+            raise ModelResponseFormattingError(
+                "No transcript section found in the text"
+            )
         return match.group(1).strip()
 
     def _generate_identifier(self) -> str:
@@ -170,11 +278,11 @@ class SrtLabelerPipeline:
         :return: Template variables dictionary
         """
         return {
-            "transcription": transcription["content"],
+            "transcription": transcription["transcription"],
             "identifier": self._generate_identifier(),
         }
 
-    def _get_backup_overrides(self, transcription_id: str) -> Dict:
+    def _get_backup_overrides(self, transcription_id: int) -> Dict:
         """Get override settings for backup preset.
 
         :param transcription_id: ID of transcription being processed
@@ -199,44 +307,10 @@ class SrtLabelerPipeline:
         :return: Tuple of (success, response, error)
         """
         return self.thread_local.backend.run_template(
-            "transcription-srt-labeling",
+            "transcription-srt-labeling.md",
             template_vars=template_vars,
             overrides=overrides,
         )
-
-    def _handle_ai_failure(
-        self, error: Optional[str], transcription_id: str, attempt: int
-    ) -> None:
-        """Handle AI analysis failure.
-
-        :param error: Error message from AI
-        :param transcription_id: ID of failed transcription
-        :param attempt: Current attempt number
-        :raises Exception: If max attempts reached
-        """
-        if attempt >= 2:
-            raise Exception(f"AI model error for transcription {transcription_id}: {error}")
-
-    def _process_single_attempt(
-        self, template_vars: Dict, transcription_id: str, attempt: int
-    ) -> Optional[Dict]:
-        """Make a single attempt at AI analysis.
-
-        :param template_vars: Template variables
-        :param transcription_id: Transcription ID
-        :param attempt: Attempt number
-        :return: Processing result or None if failed
-        """
-        overrides = (
-            self._get_backup_overrides(transcription_id) if attempt > 1 else None
-        )
-        success, response, error = self._run_ai_analysis(template_vars, overrides)
-
-        if success:
-            return {"id": transcription_id, "labeled_content": response}
-
-        self._handle_ai_failure(error, transcription_id, attempt)
-        return None
 
     def _merge_srt_content(self, original_srt: str, ai_labeled_srt: str) -> str:
         """Merge original SRT with AI-labeled content.
@@ -255,39 +329,13 @@ class SrtLabelerPipeline:
         """Process a single transcription using the thread's LWE backend.
 
         :param transcription: Transcription data to process
-        :raises Exception: If AI processing fails
         """
-        self.log.debug(f"Processing transcription {transcription["id"]}")
-        template_vars = self._prepare_template_vars(transcription)
+        self.log.debug(f"Processing transcription {transcription['id']}")
 
-        for attempt in range(1, 3):
-            result = self._process_single_attempt(
-                template_vars, transcription["id"], attempt
-            )
-            if result:
-                self._handle_successful_labeling(transcription, result)
-                return
+        result = self._process_with_error_handling(transcription)
 
-        raise Exception(
-            "Unexpected error: all attempts failed without raising exception"
-        )
-
-    def _handle_successful_labeling(self, transcription: Dict, result: Dict) -> None:
-        """Handle successful AI labeling by merging content and updating API.
-
-        :param transcription: Original transcription data
-        :param result: AI labeling result
-        :raises Exception: If merge or update fails
-        """
-        # Extract transcript section and merge with original
-        ai_labeled_content = self._extract_transcript_section(result["labeled_content"])
-        merged_content = self._merge_srt_content(
-            transcription["content"], ai_labeled_content
-        )
-        result["labeled_content"] = merged_content
-
-        # Update API immediately after successful labeling
-        self.update_transcription(result["id"], result)
+        if result.requires_api_update:
+            self.update_transcription(result)
 
     def process_transcriptions(self, transcriptions: List[Dict]) -> None:
         """Process transcriptions using thread pool.
@@ -318,38 +366,6 @@ class SrtLabelerPipeline:
         :return: Complete URL for the update endpoint
         """
         return f"https://{self.domain}/al/transcriptions/update/operator-recording"
-
-    def _build_base_payload(self, transcription_id: str) -> dict:
-        """Build the base payload for API requests.
-
-        :param transcription_id: ID of the transcription
-        :return: Base payload dictionary
-        """
-        return {
-            "api_key": self.api_key,
-            "id": transcription_id,
-            "success": True,
-            "transcription_state": TRANSCRIPTION_STATE_COMPLETE,
-        }
-
-    def _add_labeling_result(self, base_payload: dict, result: dict) -> dict:
-        """Add labeling result to the base payload.
-
-        :param base_payload: Base payload dictionary
-        :param result: Result dictionary containing labeled content
-        :return: Updated payload dictionary
-        :raises ResponseValidationError: If result data is invalid
-        """
-        if "labeled_content" not in result:
-            raise ResponseValidationError("Missing labeled_content in result")
-        if not result["labeled_content"]:
-            raise ResponseValidationError("Empty labeled_content in result")
-        if result["id"] != base_payload["id"]:
-            raise ResponseValidationError("Result ID does not match payload ID")
-
-        payload = base_payload.copy()
-        payload["content"] = result["labeled_content"]
-        return payload
 
     def _handle_update_response(self, response: requests.Response) -> None:
         """Handle the API update response.
@@ -385,18 +401,16 @@ class SrtLabelerPipeline:
         except requests.RequestException as e:
             raise RequestError(f"Failed to execute update request: {str(e)}", e)
 
-    def update_transcription(self, transcription_id: str, result: dict) -> None:
-        """Update a transcription with labeling results.
+    def update_transcription(self, result: TranscriptionResult) -> None:
+        """Update a transcription with results.
 
-        :param transcription_id: ID of the transcription to update
-        :param result: Dictionary containing labeling results
+        :param result: TranscriptionResult to send to API
         :raises RequestError: If the update request fails
         :raises AuthenticationError: If authentication fails
         :raises ResponseValidationError: If response validation fails
         """
         url = self.build_update_url()
-        base_payload = self._build_base_payload(transcription_id)
-        payload = self._add_labeling_result(base_payload, result)
+        payload = self.payload_builder.build_payload(result)
         response = self._execute_update_request(url, payload)
         self._handle_update_response(response)
 
@@ -407,3 +421,149 @@ class SrtLabelerPipeline:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit."""
         self.cleanup()
+
+    def _attempt_model_processing(
+        self, transcription: Dict, use_fallback: bool = False
+    ) -> TranscriptionResult:
+        """Process with specific model.
+
+        :param transcription: Transcription data to process
+        :param use_fallback: Whether to use fallback model
+        :return: TranscriptionResult indicating success or failure
+        """
+        try:
+            return self._execute_model_analysis(transcription, use_fallback)
+        except Exception as e:
+            return TranscriptionResult(
+                transcription_id=transcription["id"], success=False, error=e
+            )
+
+    def _execute_model_analysis(
+        self, transcription: Dict, use_fallback: bool
+    ) -> TranscriptionResult:
+        """Execute the AI model analysis and process results.
+
+        :param transcription: Transcription data to process
+        :param use_fallback: Whether to use fallback model
+        :return: TranscriptionResult from the analysis
+        """
+        success, response, error = self._run_model_with_template(
+            transcription, use_fallback
+        )
+
+        if not success:
+            return self._create_model_failure_result(transcription["id"], error)
+
+        return self._process_model_response(
+            transcription["id"], transcription["transcription"], response
+        )
+
+    def _run_model_with_template(
+        self, transcription: Dict, use_fallback: bool
+    ) -> tuple[bool, Optional[str], Optional[str]]:
+        """Run the AI model with appropriate template and settings.
+
+        :param transcription: Transcription data to process
+        :param use_fallback: Whether to use fallback model
+        :return: Tuple of (success, response, error)
+        """
+        template_vars = self._prepare_template_vars(transcription)
+        overrides = (
+            self._get_backup_overrides(transcription["id"]) if use_fallback else None
+        )
+        return self._run_ai_analysis(template_vars, overrides)
+
+    def _create_model_failure_result(
+        self, transcription_id: int, error: Optional[str]
+    ) -> TranscriptionResult:
+        """Create a failure result for model execution failure.
+
+        :param transcription_id: ID of the transcription
+        :param error: Error message from model execution
+        :return: TranscriptionResult indicating failure
+        """
+        return TranscriptionResult(
+            transcription_id=transcription_id,
+            success=False,
+            error=Exception(error if error else "AI analysis failed"),
+        )
+
+    def _process_model_response(
+        self, transcription_id: int, original_content: str, model_response: str | None
+    ) -> TranscriptionResult:
+        """Process successful model response.
+
+        :param transcription_id: ID of the transcription
+        :param original_content: Original SRT content
+        :param model_response: Response from the AI model
+        :return: TranscriptionResult with processed content or error
+        """
+        try:
+            ai_labeled_content = self._extract_transcript_section(model_response)
+            merged_content = self._merge_srt_content(
+                original_content, ai_labeled_content
+            )
+            return TranscriptionResult(
+                transcription_id=transcription_id,
+                success=True,
+                transcription=merged_content,
+            )
+        except Exception as e:
+            return TranscriptionResult(
+                transcription_id=transcription_id, success=False, error=e
+            )
+
+    def _process_with_error_handling(self, transcription: Dict) -> TranscriptionResult:
+        """Handle both primary and fallback attempts.
+
+        :param transcription: Transcription data to process
+        :return: Final TranscriptionResult
+        """
+        # Try primary model
+        primary_result = self._attempt_model_processing(
+            transcription, use_fallback=False
+        )
+        if primary_result.success:
+            return primary_result
+
+        # Try fallback model
+        fallback_result = self._attempt_model_processing(
+            transcription, use_fallback=True
+        )
+        if fallback_result.success:
+            return fallback_result
+
+        # Both attempts failed - determine if we should update API
+        if self.error_handler.should_update_with_error(
+            primary_result.error, fallback_result.error
+        ):
+            return fallback_result  # Use fallback error for final result
+
+        # At least one transient error - return result that won't trigger API update
+        return TranscriptionResult(
+            transcription_id=transcription["id"],
+            success=False,
+            error=fallback_result.error,
+        )
+
+    def _merge_labeled_content(
+        self, original_content: str, labeled_content: str, transcription_id: int
+    ) -> TranscriptionResult:
+        """Merge content with error handling.
+
+        :param original_content: Original SRT content
+        :param labeled_content: AI-labeled content
+        :param transcription_id: ID of the transcription
+        :return: TranscriptionResult with merged content or error
+        """
+        try:
+            merged_content = self.merger.merge(original_content, labeled_content)
+            return TranscriptionResult(
+                transcription_id=transcription_id,
+                success=True,
+                transcription=merged_content,
+            )
+        except Exception as e:
+            return TranscriptionResult(
+                transcription_id=transcription_id, success=False, error=e
+            )
