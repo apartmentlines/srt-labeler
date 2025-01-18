@@ -1,6 +1,0 @@
-metadata:
-  name: claude-sonnet-srt-labeler
-  provider: chat_anthropic
-model_customizations:
-  model: claude-3-5-sonnet-20241022
-  temperature: 0
