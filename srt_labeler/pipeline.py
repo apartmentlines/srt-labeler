@@ -188,22 +188,25 @@ class SrtLabelerPipeline:
     def __init__(
         self,
         api_key: Optional[str] = None,
+        file_api_key: Optional[str] = None,
         domain: Optional[str] = None,
         debug: bool = False,
     ) -> None:
         """Initialize the SRT labeling pipeline.
 
         :param api_key: API key for authentication
+        :param file_api_key: API key for file download
         :param domain: Domain for API endpoints
         :param debug: Enable debug logging
         :raises ValueError: If api_key or domain are not provided
         """
-        if not api_key or not domain:
-            raise ValueError("API key and domain must be provided")
+        if not api_key or not file_api_key or not domain:
+            raise ValueError("API key, file API key, and domain must be provided")
 
         self.log = Logger(self.__class__.__name__, debug=debug)
         self.log.debug(f"Initializing pipeline with domain: {domain}, debug: {debug}")
         self.api_key = api_key
+        self.file_api_key = file_api_key
         self.domain = domain
         self.debug = debug
         self.log.info("SRT Labeler pipeline initialized")

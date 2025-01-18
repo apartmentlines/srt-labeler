@@ -61,11 +61,17 @@ def mock_lwe_setup(mock_config, mock_lwe_backend):
 class TestSrtLabelerPipeline:
     @pytest.fixture
     def pipeline_args(self):
-        return {"api_key": "test_api_key", "domain": "test_domain", "debug": False}
+        return {
+            "api_key": "test_api_key",
+            "file_api_key": "test_file_api_key",
+            "domain": "test_domain",
+            "debug": False
+        }
 
     def test_pipeline_initialization(self, pipeline_args):
         pipeline = SrtLabelerPipeline(**pipeline_args)
         assert pipeline.api_key == "test_api_key"
+        assert pipeline.file_api_key == "test_file_api_key"
         assert pipeline.domain == "test_domain"
         assert pipeline.debug is False
         assert pipeline.log is not None
@@ -80,6 +86,10 @@ class TestSrtLabelerPipeline:
     def test_pipeline_initialization_missing_credentials(self):
         with pytest.raises(ValueError):
             SrtLabelerPipeline()
+        with pytest.raises(ValueError):
+            SrtLabelerPipeline(api_key="test", file_api_key="test")
+        with pytest.raises(ValueError):
+            SrtLabelerPipeline(api_key="test", domain="test")
 
     def test_process_transcriptions(self, pipeline_args, mock_lwe_setup):
         """Test processing multiple transcriptions."""
@@ -254,10 +264,14 @@ class TestSrtLabelerPipeline:
             # Verify backend was only initialized pool_size times
             assert mock_lwe_setup["backend_class"].call_count == DEFAULT_LWE_POOL_LIMIT
 
-    def test_backend_initialization_with_env_vars(self, pipeline_args, mock_lwe_setup):
-        """Test that backend initialization uses environment variables correctly."""
+    def test_backend_initialization_with_config_paths(self, pipeline_args, mock_lwe_setup):
+        """Test that backend initialization uses correct config paths."""
         with patch.dict(
-            os.environ, {"LWE_CONFIG_DIR": "/test/config", "LWE_DATA_DIR": "/test/data"}
+            os.environ,
+            {
+                "LWE_CONFIG_DIR": "/test/config",
+                "LWE_DATA_DIR": "/test/data"
+            }
         ):
             pipeline = SrtLabelerPipeline(**pipeline_args)
             pipeline._initialize_worker()

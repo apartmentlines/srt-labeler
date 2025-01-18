@@ -19,6 +19,7 @@ class SrtLabeler:
     def __init__(
         self,
         api_key: Optional[str] = None,
+        file_api_key: Optional[str] = None,
         domain: Optional[str] = None,
         limit: Optional[int] = None,
         min_id: Optional[int] = None,
@@ -27,6 +28,7 @@ class SrtLabeler:
     ) -> None:
         self.log = Logger(self.__class__.__name__, debug=debug)
         self.api_key = api_key
+        self.file_api_key = file_api_key
         self.domain = domain
         self.limit = limit
         self.min_id = min_id
@@ -37,6 +39,7 @@ class SrtLabeler:
     def _initialize_pipeline(self) -> SrtLabelerPipeline:
         return SrtLabelerPipeline(
             api_key=self.api_key,
+            file_api_key=self.file_api_key,
             domain=self.domain,
             debug=self.debug,
         )
@@ -78,9 +81,9 @@ class SrtLabeler:
 
     def setup_configuration(self) -> None:
         self.log.debug("Setting up configuration")
-        if not self.api_key or not self.domain:
-            fail_hard("API key and domain must be provided")
-        set_environment_variables(self.api_key, self.domain)
+        if not self.api_key or not self.file_api_key or not self.domain:
+            fail_hard("API key, file API key, and domain must be provided")
+        set_environment_variables(self.api_key, self.file_api_key, self.domain)
         self.log.info("Configuration loaded successfully")
 
     def run(self) -> None:
@@ -119,6 +122,11 @@ def parse_arguments() -> argparse.Namespace:
         help="API key (also can be provided as SRT_LABELER_API_KEY environment variable)",
     )
     parser.add_argument(
+        "--file-api-key",
+        type=str,
+        help="File API key (also can be provided as SRT_LABELER_FILE_API_KEY environment variable)",
+    )
+    parser.add_argument(
         "--domain",
         type=str,
         help="Transcription domain used for REST operations (also can be provided as SRT_LABELER_DOMAIN environment variable)",
@@ -131,13 +139,14 @@ def main() -> None:
     args = parse_arguments()
 
     try:
-        api_key, domain = load_configuration(args)
+        api_key, file_api_key, domain = load_configuration(args)
     except ValueError as e:
         fail_hard(str(e))
         return
 
     labeler = SrtLabeler(
         api_key=api_key,
+        file_api_key=file_api_key,
         domain=domain,
         limit=args.limit,
         min_id=args.min_id,
