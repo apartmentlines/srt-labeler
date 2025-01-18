@@ -3,7 +3,7 @@ backend_options:
   title_generation:
     provider: openrouter
 model:
-  default_preset: llama-3.3-chatbot
+  default_preset: llama-3.3-srt-labeler
 plugins:
   enabled:
     - provider_chat_fireworks
