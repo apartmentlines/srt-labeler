@@ -13,5 +13,5 @@ TRANSCRIPTION_STATE_ACTIVE = "active"
 TRANSCRIPTION_STATE_COMPLETE = "complete"
 
 # LWE constants
-LWE_DEFAULT_PRESET = "llama-3.3"
-LWE_FALLBACK_PRESET = "claude-sonnet"
+LWE_DEFAULT_PRESET = "llama-3.3-srt-labeler"
+LWE_FALLBACK_PRESET = "claude-sonnet-srt-labeler"

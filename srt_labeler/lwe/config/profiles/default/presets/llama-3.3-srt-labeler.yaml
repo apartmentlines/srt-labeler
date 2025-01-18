@@ -1,5 +1,5 @@
 metadata:
-  name: llama-3.3-chatbot
+  name: llama-3.3-srt-labeler
   provider: chat_fireworks
 model_customizations:
   max_tokens: 16000
