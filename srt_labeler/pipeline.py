@@ -202,9 +202,11 @@ class SrtLabelerPipeline:
             raise ValueError("API key and domain must be provided")
 
         self.log = Logger(self.__class__.__name__, debug=debug)
+        self.log.debug(f"Initializing pipeline with domain: {domain}, debug: {debug}")
         self.api_key = api_key
         self.domain = domain
         self.debug = debug
+        self.log.info("SRT Labeler pipeline initialized")
 
         # Initialize handlers
         self.error_handler = TranscriptionErrorHandler()
@@ -236,13 +238,16 @@ class SrtLabelerPipeline:
         if data_dir:
             config_args["data_dir"] = data_dir
 
+        self.log.debug(f"Initializing LWE backend with config args: {config_args}")
         config = Config(**config_args)
         config.load_from_file()
         config.set("model.default_preset", LWE_DEFAULT_PRESET)
         if self.debug:
             config.set("debug.log.enabled", True)
 
-        return ApiBackend(config)
+        backend = ApiBackend(config)
+        self.log.debug("LWE backend initialization complete")
+        return backend
 
     def _initialize_worker(self) -> None:
         """Initialize worker thread with its own LWE backend."""
@@ -255,6 +260,7 @@ class SrtLabelerPipeline:
         :return: Extracted transcript content
         :raises Exception: If transcript section not found
         """
+        self.log.debug("Attempting to extract transcript section from response")
         if not response:
             raise ModelResponseFormattingError("No response provided")
         match = re.search(r"<transcript>(.*?)</transcript>", response, re.DOTALL)
@@ -262,7 +268,9 @@ class SrtLabelerPipeline:
             raise ModelResponseFormattingError(
                 "No transcript section found in the text"
             )
-        return match.group(1).strip()
+        extracted = match.group(1).strip()
+        self.log.debug("Successfully extracted transcript section")
+        return extracted
 
     def _generate_identifier(self) -> str:
         """Generate a short unique identifier.
@@ -277,10 +285,17 @@ class SrtLabelerPipeline:
         :param transcription: Transcription data
         :return: Template variables dictionary
         """
-        return {
+        self.log.debug(
+            f"Preparing template variables for transcription {transcription['id']}"
+        )
+        template_vars = {
             "transcription": transcription["transcription"],
             "identifier": self._generate_identifier(),
         }
+        self.log.debug(
+            f"Template variables prepared with identifier: {template_vars['identifier']}"
+        )
+        return template_vars
 
     def _get_backup_overrides(self, transcription_id: int) -> Dict:
         """Get override settings for backup preset.
@@ -291,11 +306,13 @@ class SrtLabelerPipeline:
         self.log.warning(
             f"Using backup preset for transcription {transcription_id} after failure"
         )
-        return {
+        overrides = {
             "request_overrides": {
                 "preset": LWE_FALLBACK_PRESET,
             },
         }
+        self.log.debug(f"Applied backup overrides: {overrides}")
+        return overrides
 
     def _run_ai_analysis(
         self, template_vars: Dict, overrides: Optional[Dict] = None
@@ -306,11 +323,14 @@ class SrtLabelerPipeline:
         :param overrides: Optional override settings
         :return: Tuple of (success, response, error)
         """
-        return self.thread_local.backend.run_template(
+        self.log.debug("Running AI analysis with template")
+        result = self.thread_local.backend.run_template(
             "transcription-srt-labeling.md",
             template_vars=template_vars,
             overrides=overrides,
         )
+        self.log.debug(f"AI analysis completed with success: {result[0]}")
+        return result
 
     def _merge_srt_content(self, original_srt: str, ai_labeled_srt: str) -> str:
         """Merge original SRT with AI-labeled content.
@@ -320,8 +340,11 @@ class SrtLabelerPipeline:
         :return: Merged SRT content
         :raises Exception: If merge fails
         """
+        self.log.debug("Attempting to merge SRT content")
         try:
-            return self.merger.merge(original_srt, ai_labeled_srt)
+            merged = self.merger.merge(original_srt, ai_labeled_srt)
+            self.log.debug("Successfully merged SRT content")
+            return merged
         except Exception as e:
             raise Exception(f"Failed to merge SRT content: {str(e)}")
 
@@ -342,6 +365,7 @@ class SrtLabelerPipeline:
 
         :param transcriptions: List of transcriptions to process
         """
+        self.log.info(f"Starting processing of {len(transcriptions)} transcriptions")
         # Submit all transcriptions to the thread pool and wait for completion
         futures = [
             self.executor.submit(self._process_transcription, transcription)
@@ -354,11 +378,14 @@ class SrtLabelerPipeline:
                 future.result()
             except Exception as e:
                 self.log.error(f"Error processing transcription: {e}")
+        self.log.info("Completed processing all transcriptions")
 
     def cleanup(self):
         """Explicitly cleanup resources."""
+        self.log.debug("Starting pipeline cleanup")
         if hasattr(self, "executor"):
             self.executor.shutdown(wait=True)
+        self.log.debug("Pipeline cleanup completed")
 
     def build_update_url(self) -> str:
         """Build the URL for the transcription update endpoint.
@@ -374,6 +401,7 @@ class SrtLabelerPipeline:
         :raises AuthenticationError: If authentication fails
         :raises ResponseValidationError: If response is invalid or indicates an error
         """
+        self.log.debug("Processing API update response")
         try:
             data = response.json()
         except ValueError as e:
@@ -396,8 +424,11 @@ class SrtLabelerPipeline:
         :return: API response
         :raises RequestError: If the request fails
         """
+        self.log.debug(f"Executing update request to {url}")
         try:
-            return post_request(url, payload)
+            response = post_request(url, payload)
+            self.log.debug("Received response from API")
+            return response
         except requests.RequestException as e:
             raise RequestError(f"Failed to execute update request: {str(e)}", e)
 
@@ -409,6 +440,7 @@ class SrtLabelerPipeline:
         :raises AuthenticationError: If authentication fails
         :raises ResponseValidationError: If response validation fails
         """
+        self.log.info(f"Updating transcription {result.transcription_id}")
         url = self.build_update_url()
         payload = self.payload_builder.build_payload(result)
         response = self._execute_update_request(url, payload)
@@ -431,8 +463,13 @@ class SrtLabelerPipeline:
         :param use_fallback: Whether to use fallback model
         :return: TranscriptionResult indicating success or failure
         """
+        self.log.debug(f"Attempting model processing with fallback={use_fallback}")
         try:
-            return self._execute_model_analysis(transcription, use_fallback)
+            result = self._execute_model_analysis(transcription, use_fallback)
+            self.log.debug(
+                f"Model processing attempt completed with success={result.success}"
+            )
+            return result
         except Exception as e:
             return TranscriptionResult(
                 transcription_id=transcription["id"], success=False, error=e
@@ -447,9 +484,11 @@ class SrtLabelerPipeline:
         :param use_fallback: Whether to use fallback model
         :return: TranscriptionResult from the analysis
         """
+        self.log.debug("Starting model analysis execution")
         success, response, error = self._run_model_with_template(
             transcription, use_fallback
         )
+        self.log.debug(f"Model analysis execution completed with success={success}")
 
         if not success:
             return self._create_model_failure_result(transcription["id"], error)
@@ -467,11 +506,14 @@ class SrtLabelerPipeline:
         :param use_fallback: Whether to use fallback model
         :return: Tuple of (success, response, error)
         """
+        self.log.debug("Executing model template")
         template_vars = self._prepare_template_vars(transcription)
         overrides = (
             self._get_backup_overrides(transcription["id"]) if use_fallback else None
         )
-        return self._run_ai_analysis(template_vars, overrides)
+        result = self._run_ai_analysis(template_vars, overrides)
+        self.log.debug(f"Template execution completed with success={result[0]}")
+        return result
 
     def _create_model_failure_result(
         self, transcription_id: int, error: Optional[str]
@@ -498,11 +540,13 @@ class SrtLabelerPipeline:
         :param model_response: Response from the AI model
         :return: TranscriptionResult with processed content or error
         """
+        self.log.debug("Processing model response")
         try:
             ai_labeled_content = self._extract_transcript_section(model_response)
             merged_content = self._merge_srt_content(
                 original_content, ai_labeled_content
             )
+            self.log.debug("Successfully processed model response")
             return TranscriptionResult(
                 transcription_id=transcription_id,
                 success=True,
@@ -519,6 +563,7 @@ class SrtLabelerPipeline:
         :param transcription: Transcription data to process
         :return: Final TranscriptionResult
         """
+        self.log.debug("Starting primary model attempt")
         # Try primary model
         primary_result = self._attempt_model_processing(
             transcription, use_fallback=False
@@ -526,6 +571,7 @@ class SrtLabelerPipeline:
         if primary_result.success:
             return primary_result
 
+        self.log.debug("Starting fallback model attempt")
         # Try fallback model
         fallback_result = self._attempt_model_processing(
             transcription, use_fallback=True
@@ -533,6 +579,7 @@ class SrtLabelerPipeline:
         if fallback_result.success:
             return fallback_result
 
+        self.log.debug("Both attempts failed, determining final result")
         # Both attempts failed - determine if we should update API
         if self.error_handler.should_update_with_error(
             primary_result.error, fallback_result.error
