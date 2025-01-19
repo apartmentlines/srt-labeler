@@ -10,14 +10,12 @@ from srt_labeler.config import load_configuration, set_environment_variables
     {
         "SRT_LABELER_API_KEY": "env_api_key",
         "SRT_LABELER_FILE_API_KEY": "env_file_api_key",
-        "SRT_LABELER_DOMAIN": "env_domain"
+        "SRT_LABELER_DOMAIN": "env_domain",
     },
 )
 def test_load_configuration_cli_over_env():
     args = argparse.Namespace(
-        api_key="cli_api_key",
-        file_api_key="cli_file_api_key",
-        domain="cli_domain"
+        api_key="cli_api_key", file_api_key="cli_file_api_key", domain="cli_domain"
     )
     api_key, file_api_key, domain = load_configuration(args)
     assert api_key == "cli_api_key"
@@ -30,7 +28,7 @@ def test_load_configuration_cli_over_env():
     {
         "SRT_LABELER_API_KEY": "env_api_key",
         "SRT_LABELER_FILE_API_KEY": "env_file_api_key",
-        "SRT_LABELER_DOMAIN": "env_domain"
+        "SRT_LABELER_DOMAIN": "env_domain",
     },
 )
 def test_load_configuration_env():

@@ -12,9 +12,7 @@ class TestTranscriptionPipeline:
     @pytest.fixture
     def srt_labeler(self):
         return SrtLabeler(
-            api_key="test_key",
-            file_api_key="test_file_key",
-            domain="test_domain"
+            api_key="test_key", file_api_key="test_file_key", domain="test_domain"
         )
 
     def test_initialization(self):
@@ -34,9 +32,7 @@ class TestTranscriptionPipeline:
 
         # Test with defaults
         srt_labeler = SrtLabeler(
-            api_key="test_key",
-            file_api_key="test_file_key",
-            domain="test_domain"
+            api_key="test_key", file_api_key="test_file_key", domain="test_domain"
         )
         assert srt_labeler.api_key == "test_key"
         assert srt_labeler.file_api_key == "test_file_key"
@@ -69,9 +65,7 @@ class TestTranscriptionPipeline:
         with patch("srt_labeler.main.set_environment_variables") as mock_set_env:
             srt_labeler.setup_configuration()
             mock_set_env.assert_called_once_with(
-                "test_key",
-                "test_file_key",
-                "test_domain"
+                "test_key", "test_file_key", "test_domain"
             )
 
     def test_build_retrieve_request_url(self, srt_labeler):
@@ -108,7 +102,7 @@ class TestTranscriptionPipeline:
             api_key="test_key",
             file_api_key="test_file_key",
             domain="test_domain",
-            min_id=100
+            min_id=100,
         )
         params = srt_labeler.build_retrieve_request_params()
         assert params == {"api_key": "test_key", "min_id": 100}
@@ -170,10 +164,13 @@ def test_main_configuration_error(mock_load_config):
 
 def test_parse_arguments():
     test_args = [
-        "--api-key", "test_api_key",
-        "--file-api-key", "test_file_api_key",
-        "--domain", "test_domain",
-        "--debug"
+        "--api-key",
+        "test_api_key",
+        "--file-api-key",
+        "test_file_api_key",
+        "--domain",
+        "test_domain",
+        "--debug",
     ]
     with patch("sys.argv", ["main.py"] + test_args):
         args = parse_arguments()

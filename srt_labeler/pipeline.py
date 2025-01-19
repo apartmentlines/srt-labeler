@@ -51,7 +51,10 @@ class TranscriptionResult:
         """
         if not self.error:
             return False
-        return isinstance(self.error, (SrtMergeError, ModelResponseFormattingError, RequestFileNotFoundError))
+        return isinstance(
+            self.error,
+            (SrtMergeError, ModelResponseFormattingError, RequestFileNotFoundError),
+        )
 
 
 class TranscriptionErrorHandler:
@@ -63,7 +66,10 @@ class TranscriptionErrorHandler:
         :param error: Exception to classify
         :return: True if error is considered a hard error
         """
-        return isinstance(error, (SrtMergeError, ModelResponseFormattingError, RequestFileNotFoundError))
+        return isinstance(
+            error,
+            (SrtMergeError, ModelResponseFormattingError, RequestFileNotFoundError),
+        )
 
     def should_update_with_error(
         self, primary_error: Optional[Exception], fallback_error: Optional[Exception]
@@ -318,14 +324,16 @@ class SrtLabelerPipeline:
         return template_vars
 
     def _check_download_errors(self, response: requests.Response) -> None:
-        content_type = response.headers.get('content-type', '')
-        if 'json' in content_type.lower():
+        content_type = response.headers.get("content-type", "")
+        if "json" in content_type.lower():
             error_data = response.json()
             raise RequestError(f"Error downloading audio file: {error_data}")
         if not response.content:
             raise RequestError("Received empty response")
         if response.status_code == 404:
-            raise RequestFileNotFoundError(f"Error downloading audio file: {response.status_code}")
+            raise RequestFileNotFoundError(
+                f"Error downloading audio file: {response.status_code}"
+            )
 
     @retry(
         stop=stop_after_attempt(DEFAULT_RETRY_ATTEMPTS),
@@ -343,18 +351,16 @@ class SrtLabelerPipeline:
             self.log.debug(f"Downloaded {url}")
             return response.content
         except Exception as e:
-            self.log.warning(f"Error downloading {transcription["url"]}: {e}. Retrying...")
+            self.log.warning(
+                f"Error downloading {transcription["url"]}: {e}. Retrying..."
+            )
             raise
 
     def _add_audio_file(self, transcription: Dict) -> HumanMessage:
         audio_bytes = self._download_file(transcription)
         file = HumanMessage(
             content=[
-                {
-                    "type": "media",
-                    "mime_type": "audio/wav",
-                    "data": audio_bytes
-                },
+                {"type": "media", "mime_type": "audio/wav", "data": audio_bytes},
             ]
         )
         return file
@@ -572,9 +578,7 @@ class SrtLabelerPipeline:
         """
         self.log.debug(f"Executing model template: {LWE_TRANSCRIPTION_TEMPLATE}")
         template_vars = self._prepare_template_vars(transcription)
-        overrides = (
-            self._get_request_overrides(transcription, use_fallback)
-        )
+        overrides = self._get_request_overrides(transcription, use_fallback)
         result = self._run_ai_analysis(template_vars, overrides)
         self.log.debug(f"Template execution completed with success={result[0]}")
         return result
