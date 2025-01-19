@@ -12,6 +12,7 @@ from srt_labeler.pipeline import (
     AuthenticationError,
     ResponseValidationError,
     ModelResponseFormattingError,
+    RequestFileNotFoundError,
     TranscriptionResult,
     TranscriptionErrorHandler,
     ApiPayloadBuilder,
@@ -21,7 +22,7 @@ from srt_labeler.constants import (
     DEFAULT_LWE_POOL_LIMIT,
     UUID_SHORT_LENGTH,
     LWE_FALLBACK_PRESET,
-    TRANSCRIPTION_STATE_COMPLETE,
+    LWE_TRANSCRIPTION_TEMPLATE,
 )
 
 
@@ -457,7 +458,7 @@ Operator: Hello"""
         success, response, error = pipeline._run_ai_analysis({"test": "vars"})
 
         mock_lwe_setup["backend"].run_template.assert_called_once_with(
-            "transcription-srt-labeling.md",
+            LWE_TRANSCRIPTION_TEMPLATE,
             template_vars={"test": "vars"},
             overrides=None,
         )
@@ -478,7 +479,7 @@ Operator: Hello"""
         )
 
         mock_lwe_setup["backend"].run_template.assert_called_once_with(
-            "transcription-srt-labeling.md",
+            LWE_TRANSCRIPTION_TEMPLATE,
             template_vars={"test": "vars"},
             overrides=test_overrides,
         )
@@ -1214,6 +1215,45 @@ class TestModelResponseFormattingError:
         error = ModelResponseFormattingError("Validation error", cause)
         error_str = str(error)
         assert "Validation error" in error_str
+        # String representation should not include cause
+        # as that's handled by Python's exception chaining
+        assert "Root cause" not in error_str
+
+
+class TestRequestFileNotFoundError:
+    def test_request_file_not_found_error_initialization(self):
+        """Test basic RequestFileNotFoundError initialization with message."""
+        message = "Not found error"
+        error = RequestFileNotFoundError(message)
+        assert str(error) == message
+        assert isinstance(error, BaseError)
+
+    def test_request_file_not_found_error_with_cause(self):
+        """Test RequestFileNotFoundError initialization with cause exception."""
+        cause = ValueError("Original error")
+        error = RequestFileNotFoundError("Not found error occurred", cause)
+        assert str(error) == "Not found error occurred"
+        assert error.__cause__ == cause
+        assert isinstance(error, BaseError)
+
+    def test_request_file_not_found_error_inheritance_chain(self):
+        """Test that RequestFileNotFoundError properly inherits through the chain."""
+        error = RequestFileNotFoundError("Test error")
+        assert isinstance(error, RequestFileNotFoundError)
+        assert isinstance(error, BaseError)
+        assert isinstance(error, Exception)
+        # Should be able to catch as any parent
+        try:
+            raise RequestFileNotFoundError("Test error")
+        except BaseError as e:
+            assert isinstance(e, RequestFileNotFoundError)
+
+    def test_request_file_not_found_error_str_representation(self):
+        """Test string representation includes any cause information."""
+        cause = ValueError("Root cause")
+        error = RequestFileNotFoundError("Not found error", cause)
+        error_str = str(error)
+        assert "Not found error" in error_str
         # String representation should not include cause
         # as that's handled by Python's exception chaining
         assert "Root cause" not in error_str
