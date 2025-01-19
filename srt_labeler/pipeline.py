@@ -324,16 +324,16 @@ class SrtLabelerPipeline:
         return template_vars
 
     def _check_download_errors(self, response: requests.Response) -> None:
-        content_type = response.headers.get("content-type", "")
-        if "json" in content_type.lower():
-            error_data = response.json()
-            raise RequestError(f"Error downloading audio file: {error_data}")
-        if not response.content:
-            raise RequestError("Received empty response")
         if response.status_code == 404:
             raise RequestFileNotFoundError(
                 f"Error downloading audio file: {response.status_code}"
             )
+        if not response.content:
+            raise RequestError("Received empty response")
+        content_type = response.headers.get("content-type", "")
+        if "json" in content_type.lower():
+            error_data = response.json()
+            raise RequestError(f"Error downloading audio file: {error_data}")
 
     @retry(
         stop=stop_after_attempt(DEFAULT_RETRY_ATTEMPTS),
