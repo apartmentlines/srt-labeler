@@ -3,8 +3,10 @@ import re
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Union
 from dataclasses import dataclass
+from tenacity import retry, stop_after_attempt, wait_exponential
+from langchain_core.messages import HumanMessage
 import requests
 from .utils import post_request
 from lwe.core.config import Config
@@ -14,6 +16,9 @@ from .merger import SrtMerger, SrtMergeError
 from .constants import (
     LWE_DEFAULT_PRESET,
     LWE_FALLBACK_PRESET,
+    LWE_TRANSCRIPTION_TEMPLATE,
+    DEFAULT_RETRY_ATTEMPTS,
+    DOWNLOAD_TIMEOUT,
     DEFAULT_LWE_POOL_LIMIT,
     UUID_SHORT_LENGTH,
     TRANSCRIPTION_STATE_COMPLETE,
@@ -46,7 +51,7 @@ class TranscriptionResult:
         """
         if not self.error:
             return False
-        return isinstance(self.error, (SrtMergeError, ModelResponseFormattingError))
+        return isinstance(self.error, (SrtMergeError, ModelResponseFormattingError, RequestFileNotFoundError))
 
 
 class TranscriptionErrorHandler:
@@ -58,7 +63,7 @@ class TranscriptionErrorHandler:
         :param error: Exception to classify
         :return: True if error is considered a hard error
         """
-        return isinstance(error, (SrtMergeError, ModelResponseFormattingError))
+        return isinstance(error, (SrtMergeError, ModelResponseFormattingError, RequestFileNotFoundError))
 
     def should_update_with_error(
         self, primary_error: Optional[Exception], fallback_error: Optional[Exception]
@@ -175,6 +180,18 @@ class ModelResponseFormattingError(BaseError):
 
     def __init__(self, message: str, cause: Optional[Exception] = None) -> None:
         """Initialize model response formatting error.
+
+        :param message: Error message
+        :param cause: Optional causing exception
+        """
+        super().__init__(message, cause)
+
+
+class RequestFileNotFoundError(BaseError):
+    """Exception raised for HTTP 404 errors."""
+
+    def __init__(self, message: str, cause: Optional[Exception] = None) -> None:
+        """Initialize file not found error.
 
         :param message: Error message
         :param cause: Optional causing exception
@@ -300,21 +317,65 @@ class SrtLabelerPipeline:
         )
         return template_vars
 
-    def _get_backup_overrides(self, transcription_id: int) -> Dict:
+    def _check_download_errors(self, response: requests.Response) -> None:
+        content_type = response.headers.get('content-type', '')
+        if 'json' in content_type.lower():
+            error_data = response.json()
+            raise RequestError(f"Error downloading audio file: {error_data}")
+        if not response.content:
+            raise RequestError("Received empty response")
+        if response.status_code == 404:
+            raise RequestFileNotFoundError(f"Error downloading audio file: {response.status_code}")
+
+    @retry(
+        stop=stop_after_attempt(DEFAULT_RETRY_ATTEMPTS),
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+        reraise=True,
+    )
+    def _download_file(self, transcription: Dict) -> bytes:
+        try:
+            url = transcription["url"]
+            self.log.debug(f"Downloading {url}")
+            params = {"api_key": self.file_api_key}
+            response = requests.get(url, params=params, timeout=DOWNLOAD_TIMEOUT)
+            response.raise_for_status()
+            self._check_download_errors(response)
+            self.log.debug(f"Downloaded {url}")
+            return response.content
+        except Exception as e:
+            self.log.warning(f"Error downloading {transcription["url"]}: {e}. Retrying...")
+            raise
+
+    def _add_audio_file(self, transcription: Dict) -> HumanMessage:
+        audio_bytes = self._download_file(transcription)
+        file = HumanMessage(
+            content=[
+                {
+                    "type": "media",
+                    "mime_type": "audio/wav",
+                    "data": audio_bytes
+                },
+            ]
+        )
+        return file
+
+    def _get_request_overrides(self, transcription: Dict, fallback: bool) -> Dict:
         """Get override settings for backup preset.
 
         :param transcription_id: ID of transcription being processed
         :return: Override settings dictionary
         """
-        self.log.warning(
-            f"Using backup preset for transcription {transcription_id} after failure"
-        )
-        overrides = {
+        overrides: Dict[str, Dict[str, Union[List[HumanMessage], str]]] = {
             "request_overrides": {
-                "preset": LWE_FALLBACK_PRESET,
+                "files": [self._add_audio_file(transcription)],
             },
         }
-        self.log.debug(f"Applied backup overrides: {overrides}")
+        if fallback:
+            self.log.warning(
+                f"Using backup preset for transcription {transcription["id"]} after failure"
+            )
+            overrides["request_overrides"]["preset"] = LWE_FALLBACK_PRESET
+            self.log.debug(f"Applied backup override: {LWE_FALLBACK_PRESET}")
         return overrides
 
     def _run_ai_analysis(
@@ -328,7 +389,7 @@ class SrtLabelerPipeline:
         """
         self.log.debug("Running AI analysis with template")
         result = self.thread_local.backend.run_template(
-            "transcription-srt-labeling.md",
+            LWE_TRANSCRIPTION_TEMPLATE,
             template_vars=template_vars,
             overrides=overrides,
         )
@@ -509,10 +570,10 @@ class SrtLabelerPipeline:
         :param use_fallback: Whether to use fallback model
         :return: Tuple of (success, response, error)
         """
-        self.log.debug("Executing model template")
+        self.log.debug(f"Executing model template: {LWE_TRANSCRIPTION_TEMPLATE}")
         template_vars = self._prepare_template_vars(transcription)
         overrides = (
-            self._get_backup_overrides(transcription["id"]) if use_fallback else None
+            self._get_request_overrides(transcription, use_fallback)
         )
         result = self._run_ai_analysis(template_vars, overrides)
         self.log.debug(f"Template execution completed with success={result[0]}")
