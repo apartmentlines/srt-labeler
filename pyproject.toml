@@ -20,7 +20,7 @@ dependencies = [
     "requests",
     "tenacity",
     "srt",
-    "llm-workflow-engine @ git+https://github.com/llm-workflow-engine/llm-workflow-engine.git@2bc533ecf2510b330ad51084446c8788431b4e5b",
+    "llm-workflow-engine @ git+https://github.com/llm-workflow-engine/llm-workflow-engine.git@4df47950b509b415f7e453b443e0321c558a8514",
     "lwe-plugin-provider-chat-fireworks @ git+https://github.com/llm-workflow-engine/lwe-plugin-provider-chat-fireworks.git@97b529826d58177cf25d3f33fa5bda5d03d62a71",
     "lwe-plugin-provider-chat-google-genai @ git+https://github.com/llm-workflow-engine/lwe-plugin-provider-chat-google-genai.git@ae2356662c5599fda073ffbb2ed9c4e69dee7de6",
     "lwe-plugin-provider-openrouter @ git+https://github.com/llm-workflow-engine/lwe-plugin-provider-openrouter.git@932dc19c1e1d3805d48e005ff24fe50747805073",
