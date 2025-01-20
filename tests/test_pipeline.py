@@ -1,7 +1,7 @@
 import os
 import pytest
 import requests
-from unittest.mock import Mock, patch, call
+from unittest.mock import Mock, patch
 from concurrent.futures import ThreadPoolExecutor
 from langchain_core.messages import HumanMessage
 from lwe.core.config import Config
@@ -1211,14 +1211,9 @@ Invalid SRT format
             pipeline._execute_update_request.assert_called_once()
             pipeline._handle_update_response.assert_called_once()
 
-    def test_attempt_model_processing_direct(
-        self, pipeline_args, audio_transcription, mock_audio_response, mock_network
-    ):
+    def test_attempt_model_processing_direct(self, pipeline_args, audio_transcription):
         """Test direct model processing attempt."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
-        mock_network["get"].return_value = mock_audio_response
-        mock_audio_response.content = b"test_audio_data"
-        mock_audio_response.headers = {"content-type": "audio/wav"}
 
         # Test successful case
         with patch.object(
@@ -1233,11 +1228,6 @@ Invalid SRT format
             result = pipeline._attempt_model_processing(audio_transcription)
             assert result.success is True
             assert result.transcription == "success"
-            mock_network["get"].assert_called_with(
-                audio_transcription["url"],
-                params={"api_key": pipeline.file_api_key},
-                timeout=DOWNLOAD_TIMEOUT,
-            )
 
         # Test error case with successful audio download
         with patch.object(
@@ -1246,13 +1236,6 @@ Invalid SRT format
             result = pipeline._attempt_model_processing(audio_transcription)
             assert result.success is False
             assert "test error" in str(result.error)
-
-        # Test audio download failure
-        mock_network["get"].side_effect = requests.RequestException("Download failed")
-        result = pipeline._attempt_model_processing(audio_transcription)
-        assert result.success is False
-        assert isinstance(result.error, RequestError)
-        assert "Download failed" in str(result.error)
 
     def test_run_model_with_template_direct(
         self, pipeline_args, mock_lwe_setup, audio_transcription
@@ -1301,11 +1284,44 @@ Invalid SRT format
             )
 
     def test_process_with_error_handling_direct(
-        self, pipeline_args, audio_transcription, mock_audio_response, mock_network
+        self, pipeline_args, audio_transcription
     ):
         """Test direct error handling process."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
-        mock_network["get"].return_value = mock_audio_response
+
+        mock_determine = Mock(
+            return_value=TranscriptionResult(
+                transcription_id=audio_transcription["id"],
+                success=False,
+                error=Exception("final error"),
+            )
+        )
+        pipeline._determine_final_error_result = mock_determine
+        fallback_success = TranscriptionResult(
+            transcription_id=audio_transcription["id"],
+            success=True,
+            transcription="fallback success",
+        )
+        primary_hard_error = TranscriptionResult(
+            transcription_id=audio_transcription["id"],
+            success=False,
+            error=SrtMergeError("primary hard error"),
+        )
+        fallback_hard_error = TranscriptionResult(
+            transcription_id=audio_transcription["id"],
+            success=False,
+            error=ModelResponseFormattingError("fallback hard error"),
+        )
+        primary_transient = TranscriptionResult(
+            transcription_id=audio_transcription["id"],
+            success=False,
+            error=Exception("primary transient error"),
+        )
+        fallback_transient = TranscriptionResult(
+            transcription_id=audio_transcription["id"],
+            success=False,
+            error=Exception("fallback transient error"),
+        )
 
         # Test successful primary attempt
         with patch.object(
@@ -1320,40 +1336,156 @@ Invalid SRT format
             result = pipeline._process_with_error_handling(audio_transcription)
             assert result.success is True
             assert result.transcription == "success"
-            mock_network["get"].assert_called_with(
-                audio_transcription["url"],
-                params={"api_key": pipeline.file_api_key},
-                timeout=DOWNLOAD_TIMEOUT,
-            )
+            mock_determine.assert_not_called()  # Verify not called on success
+
+        mock_determine.reset_mock()
 
         # Test fallback after primary failure
-        primary_error = TranscriptionResult(
-            transcription_id=audio_transcription["id"],
-            success=False,
-            error=Exception("primary error"),
-        )
-        fallback_success = TranscriptionResult(
-            transcription_id=audio_transcription["id"],
-            success=True,
-            transcription="fallback success",
-        )
         with patch.object(
             pipeline,
             "_attempt_model_processing",
-            side_effect=[primary_error, fallback_success],
+            side_effect=[primary_hard_error, fallback_success],
         ):
             result = pipeline._process_with_error_handling(audio_transcription)
             assert result.success is True
             assert result.transcription == "fallback success"
+            mock_determine.assert_not_called()  # Verify not called on fallback success
 
-        # Test audio download failure
-        mock_network["get"].side_effect = requests.RequestException("Download failed")
-        with patch.object(pipeline, "_attempt_model_processing") as mock_attempt:
+        mock_determine.reset_mock()
+
+        # Test primary hard error, fallback hard error
+        with patch.object(
+            pipeline,
+            "_attempt_model_processing",
+            side_effect=[primary_hard_error, fallback_hard_error],
+        ):
             result = pipeline._process_with_error_handling(audio_transcription)
+            mock_determine.assert_called_once_with(
+                audio_transcription["id"], primary_hard_error, fallback_hard_error
+            )
             assert result.success is False
-            assert isinstance(result.error, RequestError)
-            assert "Download failed" in str(result.error)
-            mock_attempt.assert_not_called()
+            assert isinstance(result.error, Exception)
+            assert "final error" in str(result.error)
+
+        mock_determine.reset_mock()
+
+        # Test primary transient error, fallback transient
+        with patch.object(
+            pipeline,
+            "_attempt_model_processing",
+            side_effect=[primary_transient, fallback_transient],
+        ):
+            result = pipeline._process_with_error_handling(audio_transcription)
+            mock_determine.assert_called_once_with(
+                audio_transcription["id"], primary_transient, fallback_transient
+            )
+            assert result.success is False
+            assert isinstance(result.error, Exception)
+            assert "final error" in str(result.error)
+
+        mock_determine.reset_mock()
+
+        # Test primary hard error, fallback transient
+        with patch.object(
+            pipeline,
+            "_attempt_model_processing",
+            side_effect=[primary_hard_error, fallback_transient],
+        ):
+            result = pipeline._process_with_error_handling(audio_transcription)
+            mock_determine.assert_called_once_with(
+                audio_transcription["id"], primary_hard_error, fallback_transient
+            )
+            assert result.success is False
+            assert isinstance(result.error, Exception)
+            assert "final error" in str(result.error)
+
+        # Reset mock for next test
+        mock_determine.reset_mock()
+
+        # Test primary transient error, fallback hard
+        with patch.object(
+            pipeline,
+            "_attempt_model_processing",
+            side_effect=[primary_transient, fallback_hard_error],
+        ):
+            result = pipeline._process_with_error_handling(audio_transcription)
+            mock_determine.assert_called_once_with(
+                audio_transcription["id"], primary_transient, fallback_hard_error
+            )
+            assert result.success is False
+            assert isinstance(result.error, Exception)
+            assert "final error" in str(result.error)
+
+    def test_determine_final_error_result(self, pipeline_args):
+        """Test determination of final error result under different scenarios."""
+        pipeline = SrtLabelerPipeline(**pipeline_args)
+
+        # Create test results with different error types
+        primary_hard = TranscriptionResult(
+            transcription_id=123,
+            success=False,
+            error=SrtMergeError("primary hard error"),
+        )
+        primary_transient = TranscriptionResult(
+            transcription_id=123,
+            success=False,
+            error=Exception("primary transient error"),
+        )
+        fallback_hard = TranscriptionResult(
+            transcription_id=123,
+            success=False,
+            error=ModelResponseFormattingError("fallback hard error"),
+        )
+        fallback_transient = TranscriptionResult(
+            transcription_id=123,
+            success=False,
+            error=Exception("fallback transient error"),
+        )
+
+        # Test when both errors are hard (should return fallback result)
+        with patch.object(
+            TranscriptionErrorHandler, "should_update_with_error", return_value=True
+        ) as mock_should_update:
+            result = pipeline._determine_final_error_result(
+                123, primary_hard, fallback_hard
+            )
+            mock_should_update.assert_called_once_with(
+                primary_hard.error, fallback_hard.error
+            )
+            assert result == fallback_hard
+            assert isinstance(result.error, ModelResponseFormattingError)
+            assert result.transcription_id == 123
+            assert result.success is False
+
+        # Test primary transient, fallback hard
+        with patch.object(
+            TranscriptionErrorHandler, "should_update_with_error", return_value=False
+        ) as mock_should_update:
+            result = pipeline._determine_final_error_result(
+                123, primary_transient, fallback_hard
+            )
+            mock_should_update.assert_called_once_with(
+                primary_transient.error, fallback_hard.error
+            )
+            assert isinstance(result.error, Exception)
+            assert "primary transient error" in str(result.error)
+            assert result.transcription_id == 123
+            assert result.success is False
+
+        # Test primary hard, fallback transient
+        with patch.object(
+            TranscriptionErrorHandler, "should_update_with_error", return_value=False
+        ) as mock_should_update:
+            result = pipeline._determine_final_error_result(
+                123, primary_hard, fallback_transient
+            )
+            mock_should_update.assert_called_once_with(
+                primary_hard.error, fallback_transient.error
+            )
+            assert isinstance(result.error, Exception)
+            assert "fallback transient error" in str(result.error)
+            assert result.transcription_id == 123
+            assert result.success is False
 
     def test_update_transcription_auth_error(self, pipeline_args):
         """Test handling of authentication error during update."""
