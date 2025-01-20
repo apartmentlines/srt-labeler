@@ -20,6 +20,7 @@ from srt_labeler.pipeline import (
 )
 from srt_labeler.merger import SrtMergeError
 from srt_labeler.constants import (
+    DEFAULT_RETRY_ATTEMPTS,
     DEFAULT_LWE_POOL_LIMIT,
     UUID_SHORT_LENGTH,
     LWE_FALLBACK_PRESET,
@@ -297,6 +298,129 @@ class TestSrtLabelerPipeline:
                 assert any(
                     r.success and r.transcription == "Success" for r in update_calls
                 )
+
+    def test_check_download_errors_404(self, pipeline_args):
+        """Test that a 404 response raises RequestFileNotFoundError."""
+        pipeline = SrtLabelerPipeline(**pipeline_args)
+        mock_response = Mock(spec=requests.Response)
+        mock_response.status_code = 404
+        mock_response.content = b""
+        mock_response.headers = {}
+        with pytest.raises(RequestFileNotFoundError) as exc_info:
+            pipeline._check_download_errors(mock_response)
+        assert "Error downloading audio file: 404" in str(exc_info.value)
+
+    def test_check_download_errors_empty_content(self, pipeline_args):
+        """Test that an empty response content raises RequestError."""
+        pipeline = SrtLabelerPipeline(**pipeline_args)
+        mock_response = Mock(spec=requests.Response)
+        mock_response.status_code = 200
+        mock_response.content = b""
+        mock_response.headers = {}
+        with pytest.raises(RequestError) as exc_info:
+            pipeline._check_download_errors(mock_response)
+        assert "Received empty response" in str(exc_info.value)
+
+    def test_check_download_errors_json_error(self, pipeline_args):
+        """Test that a response with JSON content-type raises RequestError."""
+        pipeline = SrtLabelerPipeline(**pipeline_args)
+        mock_response = Mock(spec=requests.Response)
+        mock_response.status_code = 200
+        mock_response.content = b'{"error": "File not found"}'
+        mock_response.headers = {"content-type": "application/json"}
+        mock_response.json.return_value = {"error": "File not found"}
+        with pytest.raises(RequestError) as exc_info:
+            pipeline._check_download_errors(mock_response)
+        assert "Error downloading audio file: {'error': 'File not found'}" in str(
+            exc_info.value
+        )
+
+    def test_check_download_errors_no_error(self, pipeline_args):
+        """Test that a valid response does not raise an error."""
+        pipeline = SrtLabelerPipeline(**pipeline_args)
+        mock_response = Mock(spec=requests.Response)
+        mock_response.status_code = 200
+        mock_response.content = b"Valid content"
+        mock_response.headers = {"content-type": "audio/wav"}
+        # This should not raise any exception
+        pipeline._check_download_errors(mock_response)  # No exception expected
+
+    def test_download_file_success(
+        self, pipeline_args, audio_transcription, mock_network
+    ):
+        """Test successful file download."""
+        pipeline = SrtLabelerPipeline(**pipeline_args)
+        mock_response = Mock(spec=requests.Response)
+        mock_response.status_code = 200
+        mock_response.content = b"Audio data"
+        mock_response.headers = {"content-type": "audio/wav"}
+        mock_network["get"].return_value = mock_response
+
+        content = pipeline._download_file(audio_transcription)
+        mock_network["get"].assert_called_once_with(
+            audio_transcription["url"],
+            params={"api_key": pipeline.file_api_key},
+            timeout=DOWNLOAD_TIMEOUT,
+        )
+        assert content == b"Audio data"
+
+    def test_download_file_network_error_retries(
+        self, pipeline_args, audio_transcription, mock_network
+    ):
+        """Test that network errors cause retries."""
+        pipeline = SrtLabelerPipeline(**pipeline_args)
+
+        # Configure mock to raise an exception on first calls, then succeed
+        mock_response_success = Mock(spec=requests.Response)
+        mock_response_success.status_code = 200
+        mock_response_success.content = b"Audio data"
+        mock_response_success.headers = {"content-type": "audio/wav"}
+
+        # First two calls raise exception, third call returns success
+        mock_network["get"].side_effect = [
+            requests.ConnectionError("Network Error"),
+            requests.ConnectionError("Network Error"),
+            mock_response_success,
+        ]
+
+        content = pipeline._download_file(audio_transcription)
+        assert content == b"Audio data"
+
+        assert mock_network["get"].call_count == 3  # Retried twice before success
+
+    def test_download_file_max_retries_exceeded(
+        self, pipeline_args, audio_transcription, mock_network
+    ):
+        """Test that max retries exceeded raises the exception."""
+        pipeline = SrtLabelerPipeline(**pipeline_args)
+
+        # Configure mock to always raise an exception
+        mock_network["get"].side_effect = requests.ConnectionError("Network Error")
+
+        with pytest.raises(requests.ConnectionError) as exc_info:
+            pipeline._download_file(audio_transcription)
+
+        assert "Network Error" in str(exc_info.value)
+        assert mock_network["get"].call_count == DEFAULT_RETRY_ATTEMPTS
+
+    def test_add_audio_file(self, pipeline_args, audio_transcription):
+        """Test that _add_audio_file creates a HumanMessage with the audio data."""
+        pipeline = SrtLabelerPipeline(**pipeline_args)
+        mock_audio_data = b"Audio data"
+
+        with patch.object(
+            pipeline, "_download_file", return_value=mock_audio_data
+        ) as mock_download:
+            result = pipeline._add_audio_file(audio_transcription)
+            mock_download.assert_called_once_with(audio_transcription)
+
+            assert isinstance(result, HumanMessage)
+            assert len(result.content) == 1
+            media_content = result.content[0]
+            assert isinstance(media_content, dict)
+            assert media_content.get("type") == "media"
+            assert media_content.get("mime_type") == "audio/wav"
+            assert media_content.get("data") == mock_audio_data
 
     def test_thread_pool_cleanup(self, pipeline_args, mock_lwe_setup):
         """Test that thread pool is properly shut down when cleanup is called."""
