@@ -647,18 +647,37 @@ class SrtLabelerPipeline:
         if fallback_result.success:
             return fallback_result
 
+        return self._determine_final_error_result(
+            transcription["id"], primary_result, fallback_result
+        )
+
+    def _determine_final_error_result(
+        self,
+        transcription_id: int,
+        primary_result: TranscriptionResult,
+        fallback_result: TranscriptionResult,
+    ) -> TranscriptionResult:
+        """Determine final error result when both attempts fail.
+
+        :param transcription_id: ID of the transcription
+        :param primary_result: Result from primary model attempt
+        :param fallback_result: Result from fallback model attempt
+        :return: TranscriptionResult with appropriate error handling
+        """
         self.log.debug("Both attempts failed, determining final result")
-        # Both attempts failed - determine if we should update API
         if self.error_handler.should_update_with_error(
             primary_result.error, fallback_result.error
         ):
             return fallback_result  # Use fallback error for final result
-
-        # At least one transient error - return result that won't trigger API update
+        transient_error = (
+            primary_result.error
+            if not primary_result.is_hard_error()
+            else fallback_result.error
+        )
         return TranscriptionResult(
-            transcription_id=transcription["id"],
+            transcription_id=transcription_id,
             success=False,
-            error=fallback_result.error,
+            error=transient_error,
         )
 
     def _merge_labeled_content(
