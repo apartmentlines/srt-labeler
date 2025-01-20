@@ -2,7 +2,7 @@ The following is a call between an operator at an apartment community and a pers
 
 ## TASK
 
-1. Analyze the conversation to determine who speaks in each block, the operator or the caller. When determining who speaks each block, use both the text context of the SRT transcription AND the audio reference file to inform your decisions. Noticing the difference in the voice quality of each speaker in the reference audio file and mapping that to the SRT transcription will assist you in better deciding who spoke each block in the SRT transcription.
+1. Analyze the conversation to determine who speaks in each block, the operator or the caller. When determining who speaks each block, use both the text context of the SRT transcription AND the audio reference file to inform your decisions, leveraging each resource to achieve the most accurate speaker identification. Noticing the difference in the voice quality of each speaker in the reference audio file and mapping that to the SRT transcription will assist you in better deciding who spoke each block in the SRT transcription.
 2. Include your complete analysis within a single set of <thinking></thinking> tags
 3. Then reproduce the SRT transcript adjusting each block as follows:
    - Prepend "Operator: " or "Caller: " to the subtitle text based on who spoke in that block
@@ -13,7 +13,7 @@ The following is a call between an operator at an apartment community and a pers
 
 If speaker identity is ambiguous for any line, explain your best guess in your thinking section.
 
-Do not modify spacing, punctuation, or any other aspects of the original text phrases.
+Do not modify spacing, capitalization, line breaks, punctuation, or any other aspects of the original text phrases.
 
 # EXAMPLE INPUT/OUTPUT
 
