@@ -17,7 +17,7 @@ A Python tool for automatically applying speaker labels to SRT subtitle files us
 Requires Python 3.9 or higher.
 
 ```bash
-pip install git+https://github.com/[username]/srt-labeler.git
+pip install git+https://github.com/apartmentlines/srt-labeler.git
 ```
 
 ## Configuration
@@ -50,6 +50,7 @@ srt-pipeline --api-key YOUR_API_KEY --file-api-key YOUR_FILE_API_KEY --domain yo
 ```
 
 Optional arguments:
+- `--help`: Script help
 - `--limit N`: Process only N transcriptions
 - `--min-id N`: Process transcriptions with ID >= N
 - `--max-id N`: Process transcriptions with ID <= N
@@ -92,16 +93,6 @@ Run the test suite:
 
 ```bash
 pytest
-```
-
-Code formatting:
-```bash
-black .
-```
-
-Linting:
-```bash
-flake8
 ```
 
 ## Architecture
@@ -169,5 +160,3 @@ Parameters:
 - transcription_state (required): Set to "complete"
 - transcription (optional): Updated SRT content if successful
 - metadata (optional): JSON string with error details if failed
-
-The API should be implemented with appropriate authentication, rate limiting, and error handling.
