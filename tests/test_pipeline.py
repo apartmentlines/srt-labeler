@@ -111,19 +111,29 @@ class TestSrtLabelerPipeline:
             "debug": False,
         }
 
-    def test_pipeline_initialization(self, pipeline_args):
+    def test_pipeline_initialization_with_default_parameters(self, pipeline_args):
         pipeline = SrtLabelerPipeline(**pipeline_args)
         assert pipeline.api_key == "test_api_key"
         assert pipeline.file_api_key == "test_file_api_key"
         assert pipeline.domain == "test_domain"
+        assert pipeline.max_workers == DEFAULT_LWE_POOL_LIMIT
         assert pipeline.debug is False
         assert pipeline.log is not None
         assert pipeline.executor._max_workers == DEFAULT_LWE_POOL_LIMIT
         assert pipeline.executor._thread_name_prefix == "LWEWorker"
 
-    def test_pipeline_initialization_with_debug(self, pipeline_args):
-        pipeline_args["debug"] = True
-        pipeline = SrtLabelerPipeline(**pipeline_args)
+    def test_pipeline_initialization_with_custom_parameters(self):
+        pipeline = SrtLabelerPipeline(
+            api_key="custom_api_key",
+            file_api_key="custom_file_api_key",
+            domain="custom_domain",
+            max_workers=4,
+            debug=True,
+        )
+        assert pipeline.api_key == "custom_api_key"
+        assert pipeline.file_api_key == "custom_file_api_key"
+        assert pipeline.domain == "custom_domain"
+        assert pipeline.max_workers == 4
         assert pipeline.debug is True
 
     def test_pipeline_initialization_missing_credentials(self):
@@ -512,19 +522,18 @@ class TestSrtLabelerPipeline:
         self, pipeline_args, audio_transcription, mock_lwe_setup
     ):
         """Test that backends are reused by verifying only pool_size backends are created."""
-        pipeline = SrtLabelerPipeline(**pipeline_args)
+        test_pool_limit = 1
+        pipeline = SrtLabelerPipeline(**pipeline_args, max_workers=test_pool_limit)
 
-        # Create more transcriptions than worker threads
+        num_transcriptions = 5
         test_transcriptions = [
             {**audio_transcription, "id": i}
-            for i in range(DEFAULT_LWE_POOL_LIMIT * 2)  # Double the pool size
+            for i in range(num_transcriptions)
         ]
-
         with patch.object(pipeline, "_process_transcription"):
             pipeline.process_transcriptions(test_transcriptions)
+            assert mock_lwe_setup["backend_class"].call_count == test_pool_limit
 
-            # Verify backend was only initialized pool_size times
-            assert mock_lwe_setup["backend_class"].call_count == DEFAULT_LWE_POOL_LIMIT
 
     def test_backend_initialization_with_config_paths(
         self, pipeline_args, mock_lwe_setup
@@ -1350,13 +1359,13 @@ Operator: Hello world
         model_response = """
 <thinking>Analysis</thinking>
 <transcript>
-Invalid SRT format
+invalid
 </transcript>"""
 
         result = pipeline._process_model_response(123, "test content", model_response)
         assert result.success is False
         assert result.transcription_id == 123
-        assert "Failed to merge SRT content" in str(result.error)
+        assert "Invalid SRT format" in str(result.error)
 
     def test_process_transcription_direct(self, pipeline_args, mock_lwe_setup):
         """Test direct processing of a single transcription."""

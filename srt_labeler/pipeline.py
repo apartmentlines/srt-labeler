@@ -219,6 +219,7 @@ class SrtLabelerPipeline:
         api_key: Optional[str] = None,
         file_api_key: Optional[str] = None,
         domain: Optional[str] = None,
+        max_workers: Optional[int] = None,
         debug: bool = False,
     ) -> None:
         """Initialize the SRT labeling pipeline.
@@ -226,6 +227,7 @@ class SrtLabelerPipeline:
         :param api_key: API key for authentication
         :param file_api_key: API key for file download
         :param domain: Domain for API endpoints
+        :param max_workers: Maximum number of threads
         :param debug: Enable debug logging
         :raises ValueError: If api_key or domain are not provided
         """
@@ -237,6 +239,7 @@ class SrtLabelerPipeline:
         self.api_key = api_key
         self.file_api_key = file_api_key
         self.domain = domain
+        self.max_workers = max_workers or DEFAULT_LWE_POOL_LIMIT
         self.debug = debug
         self.log.info("SRT Labeler pipeline initialized")
 
@@ -252,7 +255,7 @@ class SrtLabelerPipeline:
 
         # Initialize thread pool
         self.executor = ThreadPoolExecutor(
-            max_workers=DEFAULT_LWE_POOL_LIMIT,
+            max_workers=self.max_workers,
             thread_name_prefix="LWEWorker",
             initializer=self._initialize_worker,
         )
@@ -431,12 +434,9 @@ class SrtLabelerPipeline:
         :raises Exception: If merge fails
         """
         self.log.debug("Attempting to merge SRT content")
-        try:
-            merged = self.merger.merge(original_srt, ai_labeled_srt)
-            self.log.debug("Successfully merged SRT content")
-            return merged
-        except Exception as e:
-            raise Exception(f"Failed to merge SRT content: {str(e)}")
+        merged = self.merger.merge(original_srt, ai_labeled_srt)
+        self.log.debug("Successfully merged SRT content")
+        return merged
 
     def _process_transcription(self, transcription: Dict) -> None:
         """Process a single transcription using the thread's LWE backend.
