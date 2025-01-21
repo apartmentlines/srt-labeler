@@ -1,6 +1,7 @@
 import os
 import pytest
 import requests
+import json
 from unittest.mock import Mock, patch
 from concurrent.futures import ThreadPoolExecutor
 from langchain_core.messages import HumanMessage
@@ -299,51 +300,115 @@ class TestSrtLabelerPipeline:
                     r.success and r.transcription == "Success" for r in update_calls
                 )
 
-    def test_check_download_errors_404(self, pipeline_args):
+    def test_check_download_errors_http_404(self, pipeline_args):
         """Test that a 404 response raises RequestFileNotFoundError."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
+        error = requests.HTTPError("404 Client Error: Not Found for url")
         mock_response = Mock(spec=requests.Response)
         mock_response.status_code = 404
-        mock_response.content = b""
-        mock_response.headers = {}
+
         with pytest.raises(RequestFileNotFoundError) as exc_info:
-            pipeline._check_download_errors(mock_response)
+            pipeline._check_download_errors_http(mock_response, error)
         assert "Error downloading audio file: 404" in str(exc_info.value)
 
-    def test_check_download_errors_empty_content(self, pipeline_args):
-        """Test that an empty response content raises RequestError."""
+    def test_check_download_errors_http_other_error(self, pipeline_args):
+        """Test that other HTTP errors raise the original exception."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
+        error = requests.HTTPError("500 Server Error: Internal Server Error for url")
         mock_response = Mock(spec=requests.Response)
-        mock_response.status_code = 200
-        mock_response.content = b""
-        mock_response.headers = {}
-        with pytest.raises(RequestError) as exc_info:
-            pipeline._check_download_errors(mock_response)
-        assert "Received empty response" in str(exc_info.value)
+        mock_response.status_code = 500
 
-    def test_check_download_errors_json_error(self, pipeline_args):
-        """Test that a response with JSON content-type raises RequestError."""
+        with pytest.raises(requests.HTTPError) as exc_info:
+            pipeline._check_download_errors_http(mock_response, error)
+        assert "500 Server Error" in str(exc_info.value)
+
+    def test_check_download_errors_http_no_response(self, pipeline_args):
+        """Test that when response is None, the original exception is raised."""
+        pipeline = SrtLabelerPipeline(**pipeline_args)
+        error = requests.ConnectionError("Connection failed")
+
+        with pytest.raises(requests.ConnectionError) as exc_info:
+            pipeline._check_download_errors_http(response=None, error=error)
+        assert "Connection failed" in str(exc_info.value)
+
+    def test_check_download_errors_api_json_error(self, pipeline_args):
+        """Test that a JSON error response raises RequestError."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         mock_response = Mock(spec=requests.Response)
-        mock_response.status_code = 200
-        mock_response.content = b'{"error": "File not found"}'
         mock_response.headers = {"content-type": "application/json"}
         mock_response.json.return_value = {"error": "File not found"}
-        with pytest.raises(RequestError) as exc_info:
-            pipeline._check_download_errors(mock_response)
-        assert "Error downloading audio file: {'error': 'File not found'}" in str(
-            exc_info.value
-        )
 
-    def test_check_download_errors_no_error(self, pipeline_args):
-        """Test that a valid response does not raise an error."""
+        with pytest.raises(RequestError) as exc_info:
+            pipeline._check_download_errors_api(mock_response)
+        assert "Error downloading audio file: {'error': 'File not found'}" in str(exc_info.value)
+
+    def test_check_download_errors_api_no_error(self, pipeline_args):
+        """Test that when content-type is not JSON, no exception is raised."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         mock_response = Mock(spec=requests.Response)
-        mock_response.status_code = 200
-        mock_response.content = b"Valid content"
         mock_response.headers = {"content-type": "audio/wav"}
+
         # This should not raise any exception
-        pipeline._check_download_errors(mock_response)  # No exception expected
+        pipeline._check_download_errors_api(mock_response)  # No exception expected
+
+    def test_check_download_errors_api_response_none(self, pipeline_args):
+        """Test that when response is None, the method does nothing."""
+        pipeline = SrtLabelerPipeline(**pipeline_args)
+        # This should not raise any exception
+        pipeline._check_download_errors_api(response=None)  # No exception expected
+
+    def test_try_download_file_success(self, pipeline_args):
+        """Test successful file download via _try_download_file."""
+        pipeline = SrtLabelerPipeline(**pipeline_args)
+        mock_response = Mock(spec=requests.Response)
+        mock_response.content = b"Audio data"
+        mock_response.headers = {"content-type": "audio/wav"}
+
+        with patch.object(pipeline, '_download_file', return_value=mock_response) as mock_download, \
+             patch.object(pipeline, '_check_download_errors_api') as mock_check_api:
+            content = pipeline._try_download_file({"url": "http://example.com/audio.wav"})
+            mock_download.assert_called_once()
+            mock_check_api.assert_called_once_with(mock_response)
+            assert content == b"Audio data"
+
+    def test_try_download_file_http_error(self, pipeline_args):
+        """Test that HTTP errors in _download_file propagate up through _try_download_file."""
+        pipeline = SrtLabelerPipeline(**pipeline_args)
+        error = requests.HTTPError("500 Client Error")
+        with patch.object(
+            pipeline, '_download_file', side_effect=error
+        ) as mock_download:
+            with pytest.raises(requests.HTTPError) as exc_info:
+                pipeline._try_download_file({"url": "http://example.com/audio.wav"})
+            assert "500 Client Error" in str(exc_info.value)
+            mock_download.assert_called_once()
+
+    def test_try_download_file_api_error(self, pipeline_args):
+        """Test handling of API errors in _try_download_file."""
+        pipeline = SrtLabelerPipeline(**pipeline_args)
+        mock_response = Mock(spec=requests.Response)
+        mock_response.headers = {"content-type": "application/json"}
+        mock_response.json.return_value = {"error": "File not found"}
+        mock_response.content = b""
+
+        with patch.object(pipeline, '_download_file', return_value=mock_response) as mock_download, \
+             patch.object(pipeline, '_check_download_errors_api', side_effect=RequestError("API error occurred")):
+            with pytest.raises(RequestError) as exc_info:
+                pipeline._try_download_file({"url": "http://example.com/audio.wav"})
+            assert "API error occurred" in str(exc_info.value)
+            mock_download.assert_called_once()
+
+    def test_try_download_file_empty_response(self, pipeline_args):
+        """Test handling of empty response content in _try_download_file."""
+        pipeline = SrtLabelerPipeline(**pipeline_args)
+        mock_response = Mock(spec=requests.Response)
+        mock_response.content = b""
+        mock_response.headers = {"content-type": "audio/wav"}
+
+        with patch.object(pipeline, '_download_file', return_value=mock_response):
+            with pytest.raises(RequestError) as exc_info:
+                pipeline._try_download_file({"url": "http://example.com/audio.wav"})
+            assert "Received empty response" in str(exc_info.value)
 
     def test_download_file_success(
         self, pipeline_args, audio_transcription, mock_network
@@ -356,13 +421,13 @@ class TestSrtLabelerPipeline:
         mock_response.headers = {"content-type": "audio/wav"}
         mock_network["get"].return_value = mock_response
 
-        content = pipeline._download_file(audio_transcription)
+        response = pipeline._download_file(audio_transcription)
         mock_network["get"].assert_called_once_with(
             audio_transcription["url"],
             params={"api_key": pipeline.file_api_key},
             timeout=DOWNLOAD_TIMEOUT,
         )
-        assert content == b"Audio data"
+        assert response == mock_response
 
     def test_download_file_network_error_retries(
         self, pipeline_args, audio_transcription, mock_network
@@ -383,8 +448,9 @@ class TestSrtLabelerPipeline:
             mock_response_success,
         ]
 
-        content = pipeline._download_file(audio_transcription)
-        assert content == b"Audio data"
+        response = pipeline._download_file(audio_transcription)
+        assert response == mock_response_success
+        assert response.content == b"Audio data"
 
         assert mock_network["get"].call_count == 3  # Retried twice before success
 
@@ -409,9 +475,9 @@ class TestSrtLabelerPipeline:
         mock_audio_data = b"Audio data"
 
         with patch.object(
-            pipeline, "_download_file", return_value=mock_audio_data
+            pipeline, "_try_download_file", return_value=mock_audio_data
         ) as mock_download:
-            result = pipeline._add_audio_file(audio_transcription)
+            result = pipeline._add_audio_file(transcription=audio_transcription)
             mock_download.assert_called_once_with(audio_transcription)
 
             assert isinstance(result, HumanMessage)
@@ -728,10 +794,10 @@ Operator: Hello"""
         mock_network["get"].return_value = mock_error_response
         mock_error_response.status_code = 404
 
-        with pytest.raises(RequestFileNotFoundError) as exc_info:
+        with pytest.raises(RequestError) as exc_info:
             pipeline._get_request_overrides(audio_transcription, fallback=False)
 
-        assert "Error downloading audio file: 404" in str(exc_info.value)
+        assert "Error downloading audio file: {'error': 'Not found'}" in str(exc_info.value)
 
     def test_run_ai_analysis_no_overrides(
         self,
@@ -955,8 +1021,10 @@ invalid: Hello world"""
         assert error_payload["api_key"] == pipeline_args["api_key"]
         assert error_payload["id"] == 456
         assert error_payload["success"] is True
-        assert "error_stage" in error_payload
-        assert "Test error" in error_payload["error"]
+        assert "metadata" in error_payload
+        metadata = json.loads(error_payload["metadata"])
+        assert metadata["error_stage"] == "labeling"
+        assert metadata["error"] == "Test error"
 
     def test_handle_update_response_success(self, pipeline_args):
         """Test successful API response handling."""
@@ -973,7 +1041,7 @@ invalid: Hello world"""
         mock_response = Mock()
         mock_response.json.return_value = {
             "success": False,
-            "error": "Invalid or missing API key",
+            "message": "Invalid or missing API key",
         }
 
         with pytest.raises(AuthenticationError) as exc_info:
@@ -988,7 +1056,7 @@ invalid: Hello world"""
         mock_response = Mock()
         mock_response.json.return_value = {
             "success": False,
-            "error": "Invalid transcription state",
+            "message": "Invalid transcription state",
         }
 
         with pytest.raises(ResponseValidationError) as exc_info:
@@ -1368,19 +1436,20 @@ Invalid SRT format
         pipeline = SrtLabelerPipeline(**pipeline_args)
         pipeline._initialize_worker()
 
-        audio_data = b"test_audio_data"
+        # Mock the response object
+        mock_response = Mock(spec=requests.Response)
+        mock_response.content = b"test_audio_data"
+        mock_response.headers = {"content-type": "audio/wav"}
+        mock_response.status_code = 200
+
         with patch.object(
-            pipeline, "_download_file", return_value=audio_data
+            pipeline, "_download_file", return_value=mock_response
         ) as mock_download:
             # Test without fallback
-            success, response, error = pipeline._run_model_with_template(
-                audio_transcription, False
+            pipeline._run_model_with_template(
+                transcription=audio_transcription, use_fallback=False
             )
-
-            # Verify audio file was downloaded
             mock_download.assert_called_once_with(audio_transcription)
-
-            # Verify template call included audio file
             template_call = mock_lwe_setup["backend"].run_template.call_args
             assert template_call[0][0] == LWE_TRANSCRIPTION_TEMPLATE
             assert "files" in template_call[1]["overrides"]["request_overrides"]
@@ -1389,22 +1458,26 @@ Invalid SRT format
                 HumanMessage,
             )
             assert (
-                template_call[1]["overrides"]["request_overrides"]["files"][0].content[
-                    0
-                ]["data"]
-                == audio_data
+                template_call[1]["overrides"]["request_overrides"]["files"][0].content[0]["data"]
+                == b"test_audio_data"
             )
-
+            mock_download.reset_mock()
             # Test with fallback
-            success, response, error = pipeline._run_model_with_template(
-                audio_transcription, True
+            pipeline._run_model_with_template(
+                transcription=audio_transcription, use_fallback=True
             )
-
-            # Verify fallback preset was included
+            mock_download.assert_called_once_with(audio_transcription)
             template_call = mock_lwe_setup["backend"].run_template.call_args
+            assert template_call[0][0] == LWE_TRANSCRIPTION_TEMPLATE
+            assert template_call[1]["overrides"]["request_overrides"]["preset"] == LWE_FALLBACK_PRESET
+            assert "files" in template_call[1]["overrides"]["request_overrides"]
+            assert isinstance(
+                template_call[1]["overrides"]["request_overrides"]["files"][0],
+                HumanMessage,
+            )
             assert (
-                template_call[1]["overrides"]["request_overrides"]["preset"]
-                == LWE_FALLBACK_PRESET
+                template_call[1]["overrides"]["request_overrides"]["files"][0].content[0]["data"]
+                == b"test_audio_data"
             )
 
     def test_process_with_error_handling_direct(
