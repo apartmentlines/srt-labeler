@@ -5,7 +5,8 @@ The following is a call between an operator at an apartment community and a pers
 1. Analyze the conversation to determine who speaks in each block, the operator or the caller. When determining who speaks each block, use both the text context of the SRT transcription AND the audio reference file to inform your decisions, leveraging each resource to achieve the most accurate speaker identification. Noticing the difference in the voice quality of each speaker in the reference audio file and mapping that to the SRT transcription will assist you in better deciding who spoke each block in the SRT transcription.
 2. Include your complete analysis within a single set of <thinking></thinking> tags
 3. Then reproduce the SRT transcript adjusting each block as follows:
-   - Prepend "Operator: " or "Caller: " to the subtitle text based on who spoke in that block
+   - If the operator spoke the block, ALWAYS AND ONLY prepend "Operator: " to the subtitle text
+   - If the caller spoke the block, ALWAYS AND ONLY prepend "Caller: " to the subtitle text
    - The rest of the subtitle text should be EXACTLY the same as in the original transcript
    - The other lines in the block should be preserved EXACTLY as in the original transcript
 4. The entire modified transcript should be enclosed in <transcript></transcript> tags

@@ -5,7 +5,8 @@ The following is a transcript of a call between an operator at an apartment comm
 1. Analyze the conversation to determine who speaks in each block, the operator or the caller
 2. Include your complete analysis within a single set of <thinking></thinking> tags
 3. Then reproduce the SRT transcript adjusting each block as follows:
-   - Prepend "Operator: " or "Caller: " to the subtitle text based on who spoke in that block
+   - If the operator spoke the block, ALWAYS AND ONLY prepend "Operator: " to the subtitle text
+   - If the caller spoke the block, ALWAYS AND ONLY prepend "Caller: " to the subtitle text
    - The rest of the subtitle text should be EXACTLY the same as in the original transcript
    - The other lines in the block should be preserved EXACTLY as in the original transcript
 4. The entire modified transcript should be enclosed in <transcript></transcript> tags
