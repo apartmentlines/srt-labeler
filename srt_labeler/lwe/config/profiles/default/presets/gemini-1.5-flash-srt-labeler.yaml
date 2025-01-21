@@ -3,7 +3,7 @@ metadata:
   provider: chat_google_genai
 model_customizations:
   max_output_tokens: 16000
-  model: models/gemini-1.5-flash-002
+  model: models/gemini-1.5-flash-latest
   n: 1
   safety_settings:
     HARM_CATEGORY_DANGEROUS_CONTENT: BLOCK_NONE
