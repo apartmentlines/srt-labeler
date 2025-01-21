@@ -34,10 +34,15 @@ These can also be provided via command-line arguments.
 
 ### LWE Configuration
 
-The tool uses LWE (LLM Workflow Engine) with the following preset models:
+The tool uses [LWE](https://github.com/llm-workflow-engine/llm-workflow-engine) (LLM Workflow Engine) with the following preset models:
 
 - gemini-1.5-flash-srt-labeler (primary)
 - gemini-1.5-pro-srt-labeler (fallback)
+
+And the following prompt templates:
+
+- transcription-srt-labeling-with-audio.md (default)
+- transcription-srt-labeling.md
 
 ## Usage
 
