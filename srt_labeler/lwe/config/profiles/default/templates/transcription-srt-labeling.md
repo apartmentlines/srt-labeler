@@ -1,3 +1,7 @@
+---
+description: Label the provided SRT transcription using just the transcription.
+---
+
 The following is a transcript of a call between an operator at an apartment community and a person calling the apartment office, in SRT format. Each subtitle block is spoken by either the operator or caller.
 
 ## TASK

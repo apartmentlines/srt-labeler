@@ -1,3 +1,7 @@
+---
+description: Label the provided SRT transcription using the transcription and the reference audio file.
+---
+
 The following is a call between an operator at an apartment community and a person calling the apartment office. You have both the text transcription in SRT format, and the audio file of the operator and caller speaking. In the SRT transcription, each subtitle block is spoken by either the operator or caller.
 
 ## TASK
