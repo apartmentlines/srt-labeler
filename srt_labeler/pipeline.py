@@ -1,5 +1,7 @@
 import os
 import re
+import json
+import copy
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -128,7 +130,11 @@ class ApiPayloadBuilder:
         if result.success:
             return {**base_payload, "transcription": result.transcription}
 
-        return {**base_payload, "error_stage": "labeling", "error": str(result.error)}
+        metadata = {
+            "error_stage": "labeling",
+            "error": str(result.error),
+        }
+        return {**base_payload, "metadata": json.dumps(metadata)}
 
 
 class BaseError(Exception):
@@ -323,41 +329,55 @@ class SrtLabelerPipeline:
         )
         return template_vars
 
-    def _check_download_errors(self, response: requests.Response) -> None:
-        if response.status_code == 404:
-            raise RequestFileNotFoundError(
-                f"Error downloading audio file: {response.status_code}"
-            )
-        if not response.content:
-            raise RequestError("Received empty response")
-        content_type = response.headers.get("content-type", "")
-        if "json" in content_type.lower():
-            error_data = response.json()
-            raise RequestError(f"Error downloading audio file: {error_data}")
+    def _check_download_errors_http(
+        self, response: requests.Response | None, error: Exception
+    ) -> None:
+        if response is not None:
+            if response.status_code == 404:
+                raise RequestFileNotFoundError(
+                    f"Error downloading audio file: {response.status_code}"
+                )
+        raise error
+
+    def _check_download_errors_api(self, response: requests.Response | None) -> None:
+        if response:
+            content_type = response.headers.get("content-type", "")
+            if "json" in content_type.lower():
+                error_data = response.json()
+                message = f"Error downloading audio file: {error_data}"
+                self.log.error(message)
+                raise RequestError(message)
 
     @retry(
         stop=stop_after_attempt(DEFAULT_RETRY_ATTEMPTS),
         wait=wait_exponential(multiplier=1, min=4, max=10),
         reraise=True,
     )
-    def _download_file(self, transcription: Dict) -> bytes:
+    def _download_file(self, transcription: Dict) -> requests.Response | None:
+        response = None
         try:
             url = transcription["url"]
             self.log.debug(f"Downloading {url}")
             params = {"api_key": self.file_api_key}
             response = requests.get(url, params=params, timeout=DOWNLOAD_TIMEOUT)
             response.raise_for_status()
-            self._check_download_errors(response)
             self.log.debug(f"Downloaded {url}")
-            return response.content
+            return response
         except Exception as e:
             self.log.warning(
                 f"Error downloading {transcription["url"]}: {e}. Retrying..."
             )
-            raise
+            self._check_download_errors_http(response, e)
+
+    def _try_download_file(self, transcription: Dict) -> bytes:
+        response = self._download_file(transcription)
+        self._check_download_errors_api(response)
+        if response and response.content:
+            return response.content
+        raise RequestError("Received empty response")
 
     def _add_audio_file(self, transcription: Dict) -> HumanMessage:
-        audio_bytes = self._download_file(transcription)
+        audio_bytes = self._try_download_file(transcription)
         file = HumanMessage(
             content=[
                 {"type": "media", "mime_type": "audio/wav", "data": audio_bytes},
@@ -474,6 +494,7 @@ class SrtLabelerPipeline:
         self.log.debug("Processing API update response")
         try:
             data = response.json()
+            self.log.debug(f"Received response from API: {data}")
         except ValueError as e:
             raise ResponseValidationError("Invalid JSON response from API", e)
 
@@ -481,7 +502,7 @@ class SrtLabelerPipeline:
             raise ResponseValidationError("Missing success field in API response")
 
         if not data["success"]:
-            error_msg = data.get("error", "Unknown error")
+            error_msg = data.get("message", "Unknown error")
             if "Invalid or missing API key" in error_msg:
                 raise AuthenticationError(f"Authentication failed: {error_msg}")
             raise ResponseValidationError(f"Response validation failed: {error_msg}")
@@ -513,6 +534,9 @@ class SrtLabelerPipeline:
         self.log.info(f"Updating transcription {result.transcription_id}")
         url = self.build_update_url()
         payload = self.payload_builder.build_payload(result)
+        debug_payload = copy.deepcopy(payload)
+        debug_payload["api_key"] = "[REDACTED]"
+        self.log.debug(f"Updating transcription payload: {debug_payload}")
         response = self._execute_update_request(url, payload)
         self._handle_update_response(response)
 
@@ -668,6 +692,7 @@ class SrtLabelerPipeline:
         if self.error_handler.should_update_with_error(
             primary_result.error, fallback_result.error
         ):
+            self.log.warning("Both labeling errors hard, sending error state to API")
             return fallback_result  # Use fallback error for final result
         transient_error = (
             primary_result.error
