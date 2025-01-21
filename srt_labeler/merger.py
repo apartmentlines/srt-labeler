@@ -126,6 +126,8 @@ class SrtMerger:
         :return: Merged SRT content with speaker labels
         :raises SrtMergeError: If either input is None or empty
         """
+        self.log.debug(f"Unlabeled SRT file:\n\n{unlabeled_srt}")
+        self.log.debug(f"Labeled SRT file:\n\n{labeled_srt}")
         if unlabeled_srt is None or labeled_srt is None:
             raise SrtMergeError("Input SRT content cannot be None")
         if not unlabeled_srt or not labeled_srt:
