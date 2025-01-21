@@ -31,7 +31,10 @@ where = ["."]
 include = ["srt_labeler"]
 
 [tool.setuptools.package-data]
-srt_labeler = ["lwe/**/*"]
+srt_labeler = [
+    "lwe/config/**/*",
+    "lwe/data/",
+]
 
 [project.scripts]
 srt-merger = "srt_labeler.merger:main"

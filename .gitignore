@@ -1,2 +1,2 @@
 *.srt
-srt_labeler/lwe/data/
+srt_labeler/lwe/data/*
