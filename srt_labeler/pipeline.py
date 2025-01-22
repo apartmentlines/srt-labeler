@@ -362,6 +362,13 @@ class SrtLabelerPipeline:
             url = transcription["url"]
             self.log.debug(f"Downloading {url}")
             params = {"api_key": self.file_api_key}
+            # NOTE: This is a hack to force downloading from S3 specific to the Apartment Lines
+            # infrastructure.
+            if "metadata" in transcription and "call_uuid" in transcription["metadata"] and transcription["metadata"]["call_uuid"] == "N/A":
+                self.log.info(
+                    f"File must be downloaded from S3. Adding from_s3=1 to {transcription['url']}"
+                )
+                params["from_s3"] = "1"
             response = requests.get(url, params=params, timeout=DOWNLOAD_TIMEOUT)
             response.raise_for_status()
             self.log.debug(f"Downloaded {url}")
