@@ -39,14 +39,17 @@ class StatsDatabase:
                     CREATE TABLE IF NOT EXISTS totals (
                         llm_primary INTEGER,
                         llm_fallback INTEGER,
-                        llm_total INTEGER
+                        llm_total INTEGER,
+                        hard_failures INTEGER
                     )
                 """
                 )
                 cursor.execute("SELECT COUNT(*) FROM totals")
                 if cursor.fetchone()[0] == 0:
                     cursor.execute(
-                        "INSERT INTO totals (llm_primary, llm_fallback, llm_total) VALUES (0, 0, 0)"
+                        """INSERT INTO totals 
+                        (llm_primary, llm_fallback, llm_total, hard_failures) 
+                        VALUES (0, 0, 0, 0)"""
                     )
                 conn.commit()
         except sqlite3.Error as e:
@@ -80,7 +83,7 @@ class StatsDatabase:
         except sqlite3.Error as e:
             self.log.error(f"Failed to increment fallback counter: {e}")
 
-    def get_totals(self) -> Tuple[int, int, int]:
+    def get_totals(self) -> Tuple[int, int, int, int]:
         """Get current totals.
 
         :return: Tuple of (primary_count, fallback_count, total_count)
@@ -90,12 +93,23 @@ class StatsDatabase:
                 conn = self._get_conn()
                 cursor = conn.cursor()
                 cursor.execute(
-                    "SELECT llm_primary, llm_fallback, llm_total FROM totals"
+                    "SELECT llm_primary, llm_fallback, llm_total, hard_failures FROM totals"
                 )
                 return cursor.fetchone()
         except sqlite3.Error as e:
             self.log.error(f"Failed to get totals: {e}")
-            return (0, 0, 0)
+            return (0, 0, 0, 0)
+
+    def increment_hard_failure(self) -> None:
+        try:
+            with self.lock:
+                conn = self._get_conn()
+                cursor = conn.cursor()
+                self.log.debug("Incrementing hard failure counter")
+                cursor.execute("UPDATE totals SET hard_failures = hard_failures + 1")
+                conn.commit()
+        except sqlite3.Error as e:
+            self.log.error(f"Failed to increment hard failure counter: {e}")
 
     def close(self) -> None:
         """Close database connection."""

@@ -21,7 +21,7 @@ class TestStatsDatabase:
         # Verify we can get totals (which requires a working connection)
         totals = stats.get_totals()
         assert isinstance(totals, tuple)
-        assert len(totals) == 3
+        assert len(totals) == 4  # primary, fallback, total, hard_failures
 
     def test_increment_primary(self, test_db):
         """Test primary counter increment."""
@@ -84,7 +84,49 @@ class TestStatsDatabase:
         # Force an error by making the database path invalid
         stats.db_path = "/nonexistent/path/db.sqlite"
         totals = stats.get_totals()
-        assert totals == (0, 0, 0)  # Should return zeros on error
+        assert totals == (0, 0, 0, 0)  # Should return zeros on error
+
+    def test_increment_hard_failure(self, test_db):
+        """Test hard failure counter increment."""
+        stats = StatsDatabase(test_db)
+        stats.increment_hard_failure()
+        totals = stats.get_totals()
+        assert totals[0] == 0  # primary
+        assert totals[1] == 0  # fallback
+        assert totals[2] == 0  # total
+        assert totals[3] == 1  # hard failures
+
+    def test_increment_hard_failure_error_handling(self, test_db):
+        """Test error handling during hard failure increment."""
+        stats = StatsDatabase(test_db)
+        # Force an error by making the database path invalid
+        stats.db_path = "/nonexistent/path/db.sqlite"
+        stats.increment_hard_failure()  # Should log error but not raise exception
+
+    def test_thread_safety_hard_failures(self, test_db):
+        """Test thread safety for hard failures counter."""
+        stats = StatsDatabase(test_db)
+        thread_count = 4
+        increments_per_thread = 10
+
+        def increment_hard():
+            for _ in range(increments_per_thread):
+                stats.increment_hard_failure()
+
+        threads = []
+        for _ in range(thread_count):
+            t = threading.Thread(target=increment_hard)
+            threads.append(t)
+            t.start()
+
+        for t in threads:
+            t.join()
+
+        totals = stats.get_totals()
+        assert totals[0] == 0  # primary
+        assert totals[1] == 0  # fallback
+        assert totals[2] == 0  # total
+        assert totals[3] == thread_count * increments_per_thread  # hard failures
 
     def test_close_error_handling(self, test_db):
         """Test error handling during close."""

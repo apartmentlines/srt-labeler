@@ -1779,6 +1779,46 @@ invalid
                 pipeline.update_transcription(result)
             assert "Invalid API key" in str(exc_info.value)
 
+    def test_stats_increment_primary(self, pipeline_args):
+        """Test that primary model attempts increment primary counter."""
+        pipeline = SrtLabelerPipeline(**pipeline_args)
+        mock_stats = Mock()
+        pipeline.stats = mock_stats
+
+        pipeline._increment_stats(fallback=False)
+        mock_stats.increment_primary.assert_called_once()
+        mock_stats.increment_fallback.assert_not_called()
+
+    def test_stats_increment_fallback(self, pipeline_args):
+        """Test that fallback model attempts increment fallback counter."""
+        pipeline = SrtLabelerPipeline(**pipeline_args)
+        mock_stats = Mock()
+        pipeline.stats = mock_stats
+
+        pipeline._increment_stats(fallback=True)
+        mock_stats.increment_fallback.assert_called_once()
+        mock_stats.increment_primary.assert_not_called()
+
+    def test_stats_increment_hard_failure(self, pipeline_args):
+        """Test that double hard errors increment hard failure counter."""
+        pipeline = SrtLabelerPipeline(**pipeline_args)
+        mock_stats = Mock()
+        pipeline.stats = mock_stats
+
+        # Create two hard errors
+        primary_error = SrtMergeError("primary error")
+        fallback_error = ModelResponseFormattingError("fallback error")
+
+        primary_result = TranscriptionResult(
+            transcription_id=123, success=False, error=primary_error
+        )
+        fallback_result = TranscriptionResult(
+            transcription_id=123, success=False, error=fallback_error
+        )
+
+        pipeline._determine_final_error_result(123, primary_result, fallback_result)
+        mock_stats.increment_hard_failure.assert_called_once()
+
 
 class TestRequestError:
     def test_request_error_initialization(self):

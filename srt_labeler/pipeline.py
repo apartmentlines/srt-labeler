@@ -725,6 +725,7 @@ class SrtLabelerPipeline:
             primary_result.error, fallback_result.error
         ):
             self.log.warning("Both labeling errors hard, sending error state to API")
+            self.stats.increment_hard_failure()
             return fallback_result  # Use fallback error for final result
         transient_error = (
             primary_result.error
