@@ -12,6 +12,7 @@ from .utils import (
 from .config import load_configuration, set_environment_variables
 from .constants import (
     TRANSCRIPTION_STATE_ACTIVE,
+    DEFAULT_STATS_DB,
 )
 
 
@@ -24,6 +25,7 @@ class SrtLabeler:
         limit: Optional[int] = None,
         min_id: Optional[int] = None,
         max_id: Optional[int] = None,
+        stats_db: Optional[str] = None,
         debug: bool = False,
     ) -> None:
         self.log = Logger(self.__class__.__name__, debug=debug)
@@ -34,6 +36,7 @@ class SrtLabeler:
         self.min_id = min_id
         self.max_id = max_id
         self.debug = debug
+        self.stats_db = stats_db if stats_db is not None else DEFAULT_STATS_DB
         self.pipeline = self._initialize_pipeline()
 
     def _initialize_pipeline(self) -> SrtLabelerPipeline:
@@ -41,6 +44,7 @@ class SrtLabeler:
             api_key=self.api_key,
             file_api_key=self.file_api_key,
             domain=self.domain,
+            stats_db=self.stats_db,
             debug=self.debug,
         )
 
@@ -131,6 +135,12 @@ def parse_arguments() -> argparse.Namespace:
         type=str,
         help="Transcription domain used for REST operations (also can be provided as SRT_LABELER_DOMAIN environment variable)",
     )
+    parser.add_argument(
+        "--stats-db",
+        type=str,
+        default=DEFAULT_STATS_DB,
+        help=f"Path to SQLite stats database (default: %(default)s)",
+    )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     return parser.parse_args()
 
@@ -151,6 +161,7 @@ def main() -> None:
         limit=args.limit,
         min_id=args.min_id,
         max_id=args.max_id,
+        stats_db=args.stats_db,
         debug=args.debug,
     )
     labeler.run()

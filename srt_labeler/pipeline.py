@@ -2,6 +2,8 @@ import os
 import re
 import json
 import copy
+from .constants import DEFAULT_STATS_DB
+from .stats import StatsDatabase
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -220,6 +222,7 @@ class SrtLabelerPipeline:
         file_api_key: Optional[str] = None,
         domain: Optional[str] = None,
         max_workers: Optional[int] = None,
+        stats_db: str = DEFAULT_STATS_DB,
         debug: bool = False,
     ) -> None:
         """Initialize the SRT labeling pipeline.
@@ -228,6 +231,7 @@ class SrtLabelerPipeline:
         :param file_api_key: API key for file download
         :param domain: Domain for API endpoints
         :param max_workers: Maximum number of threads
+        :param stats_db: Path to SQLite stats database
         :param debug: Enable debug logging
         :raises ValueError: If api_key or domain are not provided
         """
@@ -241,6 +245,9 @@ class SrtLabelerPipeline:
         self.domain = domain
         self.max_workers = max_workers or DEFAULT_LWE_POOL_LIMIT
         self.debug = debug
+        # Initialize stats database
+        self.stats_db_path = stats_db
+        self.stats = StatsDatabase(stats_db, debug=debug)
         self.log.info("SRT Labeler pipeline initialized")
 
         # Initialize handlers
@@ -486,6 +493,8 @@ class SrtLabelerPipeline:
         self.log.debug("Starting pipeline cleanup")
         if hasattr(self, "executor"):
             self.executor.shutdown(wait=True)
+        if hasattr(self, "stats"):
+            self.stats.close()
         self.log.debug("Pipeline cleanup completed")
 
     def build_update_url(self) -> str:
@@ -555,6 +564,16 @@ class SrtLabelerPipeline:
         """Context manager entry."""
         return self
 
+    def _increment_stats(self, fallback: bool) -> None:
+        """Increment stats counters.
+
+        :param fallback: Whether this was a fallback model attempt
+        """
+        if fallback:
+            self.stats.increment_fallback()
+        else:
+            self.stats.increment_primary()
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit."""
         del exc_type, exc_val, exc_tb
@@ -575,6 +594,7 @@ class SrtLabelerPipeline:
             self.log.debug(
                 f"Model processing attempt completed with success={result.success}"
             )
+            self._increment_stats(use_fallback)
             return result
         except Exception as e:
             return TranscriptionResult(

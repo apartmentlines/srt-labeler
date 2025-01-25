@@ -15,7 +15,15 @@ class TestTranscriptionPipeline:
             api_key="test_key", file_api_key="test_file_key", domain="test_domain"
         )
 
-    def test_initialization(self):
+    @pytest.fixture(autouse=True)
+    def mock_default_stats_db(self, tmp_path):
+        """Fixture to automatically mock DEFAULT_STATS_DB for all tests in this class."""
+        default_db = str(tmp_path / "default.db")
+        with patch("srt_labeler.main.DEFAULT_STATS_DB", default_db):
+            yield default_db
+
+    def test_initialization(self, tmp_path, mock_default_stats_db):
+        custom_stats_db = str(tmp_path / "custom.db")
         # Test with all arguments specified
         srt_labeler = SrtLabeler(
             api_key="test_key",
@@ -23,12 +31,14 @@ class TestTranscriptionPipeline:
             domain="test_domain",
             limit=5,
             debug=True,
+            stats_db=custom_stats_db,
         )
         assert srt_labeler.api_key == "test_key"
         assert srt_labeler.file_api_key == "test_file_key"
         assert srt_labeler.domain == "test_domain"
         assert srt_labeler.limit == 5
         assert srt_labeler.debug is True
+        assert srt_labeler.stats_db == custom_stats_db
 
         # Test with defaults
         srt_labeler = SrtLabeler(
@@ -39,6 +49,7 @@ class TestTranscriptionPipeline:
         assert srt_labeler.domain == "test_domain"
         assert srt_labeler.limit is None
         assert srt_labeler.debug is False
+        assert srt_labeler.stats_db == mock_default_stats_db
 
     @patch("srt_labeler.main.get_request")
     def test_retrieve_transcription_data_success(self, mock_get_request, srt_labeler):
@@ -162,7 +173,8 @@ def test_main_configuration_error(mock_load_config):
             mock_fail.assert_called_once_with("Test error")
 
 
-def test_parse_arguments():
+def test_parse_arguments(tmp_path):
+    custom_stats_db = str(tmp_path / "custom.db")
     test_args = [
         "--api-key",
         "test_api_key",
@@ -171,6 +183,8 @@ def test_parse_arguments():
         "--domain",
         "test_domain",
         "--debug",
+        "--stats-db",
+        custom_stats_db,
     ]
     with patch("sys.argv", ["main.py"] + test_args):
         args = parse_arguments()
@@ -178,3 +192,4 @@ def test_parse_arguments():
         assert args.file_api_key == "test_file_api_key"
         assert args.domain == "test_domain"
         assert args.debug is True
+        assert args.stats_db == custom_stats_db

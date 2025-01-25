@@ -16,3 +16,6 @@ TRANSCRIPTION_STATE_COMPLETE = "complete"
 LWE_DEFAULT_PRESET = "gemini-1.5-flash-srt-labeler"
 LWE_FALLBACK_PRESET = "gemini-1.5-pro-srt-labeler"
 LWE_TRANSCRIPTION_TEMPLATE = "transcription-srt-labeling-with-audio.md"
+
+# Database constants
+DEFAULT_STATS_DB = "stats.db"

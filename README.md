@@ -82,6 +82,13 @@ The pipeline implements sophisticated error handling:
 - **Fallback Behavior**: Automatically attempts fallback model on primary failure
 - **API Updates**: Only updates API for successful results or confirmed hard errors
 
+## Stats Tracking
+
+The tool maintains usage statistics in a SQLite database (default: stats.db in the current directory). It tracks:
+- Primary model usage count
+- Fallback model usage count
+- Total model invocations
+
 ## Development
 
 ### Setup

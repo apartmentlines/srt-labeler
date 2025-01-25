@@ -1,2 +1,3 @@
 *.srt
+stats.db
 srt_labeler/lwe/data/*

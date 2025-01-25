@@ -103,13 +103,14 @@ class TestSrtLabelerPipeline:
             yield {"get": mock_get, "sleep": mock_sleep}
 
     @pytest.fixture
-    def pipeline_args(self):
+    def pipeline_args(self, tmp_path):
         """Fixture providing pipeline initialization arguments."""
         return {
             "api_key": "test_api_key",
             "file_api_key": "test_file_api_key",
             "domain": "test_domain",
             "debug": False,
+            "stats_db": str(tmp_path / "stats.db"),
         }
 
     def test_pipeline_initialization_with_default_parameters(self, pipeline_args):
@@ -120,22 +121,28 @@ class TestSrtLabelerPipeline:
         assert pipeline.max_workers == DEFAULT_LWE_POOL_LIMIT
         assert pipeline.debug is False
         assert pipeline.log is not None
+        assert pipeline.stats_db_path == pipeline_args["stats_db"]
+        assert hasattr(pipeline, "stats")
         assert pipeline.executor._max_workers == DEFAULT_LWE_POOL_LIMIT
         assert pipeline.executor._thread_name_prefix == "LWEWorker"
 
-    def test_pipeline_initialization_with_custom_parameters(self):
+    def test_pipeline_initialization_with_custom_parameters(self, tmp_path):
+        custom_stats_db = str(tmp_path / "custom_stats.db")
         pipeline = SrtLabelerPipeline(
             api_key="custom_api_key",
             file_api_key="custom_file_api_key",
             domain="custom_domain",
             max_workers=4,
             debug=True,
+            stats_db=custom_stats_db,
         )
         assert pipeline.api_key == "custom_api_key"
         assert pipeline.file_api_key == "custom_file_api_key"
         assert pipeline.domain == "custom_domain"
         assert pipeline.max_workers == 4
         assert pipeline.debug is True
+        assert pipeline.stats_db_path == custom_stats_db
+        assert hasattr(pipeline, "stats")
 
     def test_pipeline_initialization_missing_credentials(self):
         with pytest.raises(ValueError):
@@ -542,12 +549,19 @@ class TestSrtLabelerPipeline:
     def test_thread_pool_cleanup(self, pipeline_args):
         """Test that thread pool is properly shut down when cleanup is called."""
         mock_executor = Mock(spec=ThreadPoolExecutor)
-        with patch(
-            "srt_labeler.pipeline.ThreadPoolExecutor", return_value=mock_executor
+        with (
+            patch(
+                "srt_labeler.pipeline.ThreadPoolExecutor",
+                return_value=mock_executor,
+            ),
+            patch("srt_labeler.stats.StatsDatabase.close", autospec=True) as mock_close,
         ):
             pipeline = SrtLabelerPipeline(**pipeline_args)
             pipeline.cleanup()
             mock_executor.shutdown.assert_called_once_with(wait=True)
+            # Verify stats database was closed
+            assert hasattr(pipeline, "stats")
+            mock_close.assert_called_once()
 
     @pytest.mark.usefixtures("mock_lwe_setup")
     def test_thread_pool_cleanup_context(self, pipeline_args):
