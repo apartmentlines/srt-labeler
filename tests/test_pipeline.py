@@ -353,7 +353,9 @@ class TestSrtLabelerPipeline:
 
         with pytest.raises(RequestError) as exc_info:
             pipeline._check_download_errors_api(mock_response)
-        assert "Error downloading audio file: {'error': 'File not found'}" in str(exc_info.value)
+        assert "Error downloading audio file: {'error': 'File not found'}" in str(
+            exc_info.value
+        )
 
     def test_check_download_errors_api_no_error(self, pipeline_args):
         """Test that when content-type is not JSON, no exception is raised."""
@@ -377,9 +379,15 @@ class TestSrtLabelerPipeline:
         mock_response.content = b"Audio data"
         mock_response.headers = {"content-type": "audio/wav"}
 
-        with patch.object(pipeline, '_download_file', return_value=mock_response) as mock_download, \
-             patch.object(pipeline, '_check_download_errors_api') as mock_check_api:
-            content = pipeline._try_download_file({"url": "http://example.com/audio.wav"})
+        with (
+            patch.object(
+                pipeline, "_download_file", return_value=mock_response
+            ) as mock_download,
+            patch.object(pipeline, "_check_download_errors_api") as mock_check_api,
+        ):
+            content = pipeline._try_download_file(
+                {"url": "http://example.com/audio.wav"}
+            )
             mock_download.assert_called_once()
             mock_check_api.assert_called_once_with(mock_response)
             assert content == b"Audio data"
@@ -389,7 +397,7 @@ class TestSrtLabelerPipeline:
         pipeline = SrtLabelerPipeline(**pipeline_args)
         error = requests.HTTPError("500 Client Error")
         with patch.object(
-            pipeline, '_download_file', side_effect=error
+            pipeline, "_download_file", side_effect=error
         ) as mock_download:
             with pytest.raises(requests.HTTPError) as exc_info:
                 pipeline._try_download_file({"url": "http://example.com/audio.wav"})
@@ -404,8 +412,16 @@ class TestSrtLabelerPipeline:
         mock_response.json.return_value = {"error": "File not found"}
         mock_response.content = b""
 
-        with patch.object(pipeline, '_download_file', return_value=mock_response) as mock_download, \
-             patch.object(pipeline, '_check_download_errors_api', side_effect=RequestError("API error occurred")):
+        with (
+            patch.object(
+                pipeline, "_download_file", return_value=mock_response
+            ) as mock_download,
+            patch.object(
+                pipeline,
+                "_check_download_errors_api",
+                side_effect=RequestError("API error occurred"),
+            ),
+        ):
             with pytest.raises(RequestError) as exc_info:
                 pipeline._try_download_file({"url": "http://example.com/audio.wav"})
             assert "API error occurred" in str(exc_info.value)
@@ -418,7 +434,7 @@ class TestSrtLabelerPipeline:
         mock_response.content = b""
         mock_response.headers = {"content-type": "audio/wav"}
 
-        with patch.object(pipeline, '_download_file', return_value=mock_response):
+        with patch.object(pipeline, "_download_file", return_value=mock_response):
             with pytest.raises(RequestError) as exc_info:
                 pipeline._try_download_file({"url": "http://example.com/audio.wav"})
             assert "Received empty response" in str(exc_info.value)
@@ -453,7 +469,9 @@ class TestSrtLabelerPipeline:
         mock_response.headers = {"content-type": "audio/wav"}
         mock_network["get"].return_value = mock_response
 
-        response = pipeline._download_file({**audio_transcription, "metadata": {"call_uuid": "N/A"}})
+        response = pipeline._download_file(
+            {**audio_transcription, "metadata": {"call_uuid": "N/A"}}
+        )
         mock_network["get"].assert_called_once_with(
             f"{audio_transcription["url"]}",
             params={"api_key": pipeline.file_api_key, "from_s3": "1"},
@@ -551,13 +569,11 @@ class TestSrtLabelerPipeline:
 
         num_transcriptions = 5
         test_transcriptions = [
-            {**audio_transcription, "id": i}
-            for i in range(num_transcriptions)
+            {**audio_transcription, "id": i} for i in range(num_transcriptions)
         ]
         with patch.object(pipeline, "_process_transcription"):
             pipeline.process_transcriptions(test_transcriptions)
             assert mock_lwe_setup["backend_class"].call_count == test_pool_limit
-
 
     def test_backend_initialization_with_config_paths(
         self, pipeline_args, mock_lwe_setup
@@ -688,7 +704,9 @@ Operator: Hello world
             assert isinstance(result, TranscriptionResult)
             assert result.success is True
             assert result.transcription_id == 1
-            assert result.transcription and "Operator: Hello world" in result.transcription
+            assert (
+                result.transcription and "Operator: Hello world" in result.transcription
+            )
 
             # Verify audio file downloads were attempted for both tries
             assert mock_network["get"].call_count == 2
@@ -830,7 +848,9 @@ Operator: Hello"""
         with pytest.raises(RequestError) as exc_info:
             pipeline._get_request_overrides(audio_transcription, fallback=False)
 
-        assert "Error downloading audio file: {'error': 'Not found'}" in str(exc_info.value)
+        assert "Error downloading audio file: {'error': 'Not found'}" in str(
+            exc_info.value
+        )
 
     def test_run_ai_analysis_no_overrides(
         self,
@@ -882,9 +902,7 @@ Operator: Hello"""
 
         mock_lwe_setup["backend"].run_template.return_value = (True, "response", None)
         overrides = pipeline._get_request_overrides(audio_transcription, fallback=True)
-        pipeline._run_ai_analysis(
-            {"test": "vars"}, overrides
-        )
+        pipeline._run_ai_analysis({"test": "vars"}, overrides)
 
         # Verify template call with audio file and preset override
         template_call = mock_lwe_setup["backend"].run_template.call_args
@@ -1191,9 +1209,11 @@ invalid: Hello world"""
 
         update_url = "https://test.com/update"
         with (
-            patch.object(pipeline, 'build_update_url', return_value=update_url) as mock_build_url,
-            patch.object(pipeline, '_execute_update_request') as mock_execute,
-            patch.object(pipeline, '_handle_update_response') as mock_handle
+            patch.object(
+                pipeline, "build_update_url", return_value=update_url
+            ) as mock_build_url,
+            patch.object(pipeline, "_execute_update_request") as mock_execute,
+            patch.object(pipeline, "_handle_update_response") as mock_handle,
         ):
             pipeline.update_transcription(result)
             mock_build_url.assert_called_once()
@@ -1406,8 +1426,10 @@ invalid
 
         # Mock the internal methods using individual patches
         with (
-            patch.object(pipeline, '_process_with_error_handling', return_value=mock_result) as mock_process,
-            patch.object(pipeline, 'update_transcription') as mock_update
+            patch.object(
+                pipeline, "_process_with_error_handling", return_value=mock_result
+            ) as mock_process,
+            patch.object(pipeline, "update_transcription") as mock_update,
         ):
             pipeline._process_transcription(transcription)
 
@@ -1423,9 +1445,11 @@ invalid
         )
 
         with (
-            patch.object(pipeline, 'build_update_url', return_value="test_url") as mock_build_url,
-            patch.object(pipeline, '_execute_update_request') as mock_execute,
-            patch.object(pipeline, '_handle_update_response') as mock_handle
+            patch.object(
+                pipeline, "build_update_url", return_value="test_url"
+            ) as mock_build_url,
+            patch.object(pipeline, "_execute_update_request") as mock_execute,
+            patch.object(pipeline, "_handle_update_response") as mock_handle,
         ):
             pipeline.update_transcription(result)
 
@@ -1489,7 +1513,9 @@ invalid
                 HumanMessage,
             )
             assert (
-                template_call[1]["overrides"]["request_overrides"]["files"][0].content[0]["data"]
+                template_call[1]["overrides"]["request_overrides"]["files"][0].content[
+                    0
+                ]["data"]
                 == b"test_audio_data"
             )
             mock_download.reset_mock()
@@ -1500,14 +1526,19 @@ invalid
             mock_download.assert_called_once_with(audio_transcription)
             template_call = mock_lwe_setup["backend"].run_template.call_args
             assert template_call[0][0] == LWE_TRANSCRIPTION_TEMPLATE
-            assert template_call[1]["overrides"]["request_overrides"]["preset"] == LWE_FALLBACK_PRESET
+            assert (
+                template_call[1]["overrides"]["request_overrides"]["preset"]
+                == LWE_FALLBACK_PRESET
+            )
             assert "files" in template_call[1]["overrides"]["request_overrides"]
             assert isinstance(
                 template_call[1]["overrides"]["request_overrides"]["files"][0],
                 HumanMessage,
             )
             assert (
-                template_call[1]["overrides"]["request_overrides"]["files"][0].content[0]["data"]
+                template_call[1]["overrides"]["request_overrides"]["files"][0].content[
+                    0
+                ]["data"]
                 == b"test_audio_data"
             )
 

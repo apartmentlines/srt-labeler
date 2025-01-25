@@ -18,7 +18,9 @@ def load_configuration(args: argparse.Namespace) -> tuple[str, str, str]:
     return api_key, file_api_key, domain
 
 
-def set_environment_variables(api_key: str | None, file_api_key: str | None, domain: str | None) -> None:
+def set_environment_variables(
+    api_key: str | None, file_api_key: str | None, domain: str | None
+) -> None:
     if api_key:
         os.environ["SRT_LABELER_API_KEY"] = api_key
     if file_api_key:
