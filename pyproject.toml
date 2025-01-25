@@ -45,4 +45,5 @@ dev = [
     "pytest",
     "black",
     "flake8",
+    "pyright",
 ]
