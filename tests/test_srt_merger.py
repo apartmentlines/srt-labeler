@@ -480,7 +480,7 @@ def test_parsearguments_enables_debug_mode():
 def test_parsearguments_with_missing_required_args():
     """Test missing required arguments."""
     with pytest.raises(SystemExit):
-        parse_arguments([])
+        parse_arguments()
 
 
 # Test main

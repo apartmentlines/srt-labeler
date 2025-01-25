@@ -2,7 +2,7 @@ import os
 import pytest
 import requests
 import json
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, ANY
 from concurrent.futures import ThreadPoolExecutor
 from langchain_core.messages import HumanMessage
 from lwe.core.config import Config
@@ -175,8 +175,9 @@ class TestSrtLabelerPipeline:
                 process_calls = [call[0][0] for call in mock_process.call_args_list]
                 assert all(t in test_transcriptions for t in process_calls)
 
+    @pytest.mark.usefixtures("mock_lwe_setup")
     def test_process_transcriptions_error_handling(
-        self, pipeline_args, mock_lwe_setup, mock_audio_response, mock_network, capsys
+        self, pipeline_args, mock_audio_response, mock_network
     ):
         """Test error handling during transcription processing."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
@@ -235,14 +236,15 @@ class TestSrtLabelerPipeline:
                     isinstance(r.error, RequestFileNotFoundError) for r in update_calls
                 )
 
+    @pytest.mark.usefixtures("mock_lwe_setup")
     def test_process_transcriptions_multiple_errors(
-        self, pipeline_args, mock_lwe_setup, mock_audio_response, mock_network, capsys
+        self, pipeline_args, mock_audio_response, mock_network
     ):
         """Test handling of multiple error types including audio-related errors."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         mock_network["get"].return_value = mock_audio_response
 
-        def side_effect(transcription, use_fallback):
+        def side_effect(transcription, _):
             if transcription["id"] == 1:
                 return TranscriptionResult(
                     transcription_id=1,
@@ -480,7 +482,7 @@ class TestSrtLabelerPipeline:
 
         response = pipeline._download_file(audio_transcription)
         assert response == mock_response_success
-        assert response.content == b"Audio data"
+        assert response and response.content == b"Audio data"
 
         assert mock_network["get"].call_count == 3  # Retried twice before success
 
@@ -518,7 +520,8 @@ class TestSrtLabelerPipeline:
             assert media_content.get("mime_type") == "audio/wav"
             assert media_content.get("data") == mock_audio_data
 
-    def test_thread_pool_cleanup(self, pipeline_args, mock_lwe_setup):
+    @pytest.mark.usefixtures("mock_lwe_setup")
+    def test_thread_pool_cleanup(self, pipeline_args):
         """Test that thread pool is properly shut down when cleanup is called."""
         mock_executor = Mock(spec=ThreadPoolExecutor)
         with patch(
@@ -528,7 +531,8 @@ class TestSrtLabelerPipeline:
             pipeline.cleanup()
             mock_executor.shutdown.assert_called_once_with(wait=True)
 
-    def test_thread_pool_cleanup_context(self, pipeline_args, mock_lwe_setup):
+    @pytest.mark.usefixtures("mock_lwe_setup")
+    def test_thread_pool_cleanup_context(self, pipeline_args):
         """Test that thread pool is properly shut down when used as context manager."""
         mock_executor = Mock(spec=ThreadPoolExecutor)
         with patch(
@@ -684,7 +688,7 @@ Operator: Hello world
             assert isinstance(result, TranscriptionResult)
             assert result.success is True
             assert result.transcription_id == 1
-            assert "Operator: Hello world" in result.transcription
+            assert result.transcription and "Operator: Hello world" in result.transcription
 
             # Verify audio file downloads were attempted for both tries
             assert mock_network["get"].call_count == 2
@@ -878,7 +882,7 @@ Operator: Hello"""
 
         mock_lwe_setup["backend"].run_template.return_value = (True, "response", None)
         overrides = pipeline._get_request_overrides(audio_transcription, fallback=True)
-        success, response, error = pipeline._run_ai_analysis(
+        pipeline._run_ai_analysis(
             {"test": "vars"}, overrides
         )
 
@@ -895,10 +899,10 @@ Operator: Hello"""
             == LWE_FALLBACK_PRESET
         )
 
+    @pytest.mark.usefixtures("mock_lwe_setup")
     def test_empty_transcription_content(
         self,
         pipeline_args,
-        mock_lwe_setup,
         mock_audio_response,
         mock_network,
         audio_transcription,
@@ -916,10 +920,10 @@ Operator: Hello"""
         assert isinstance(result.error, ModelResponseFormattingError)
         assert "No transcript section found" in str(result.error)
 
+    @pytest.mark.usefixtures("mock_lwe_setup")
     def test_malformed_transcription(
         self,
         pipeline_args,
-        mock_lwe_setup,
         mock_audio_response,
         mock_network,
         audio_transcription,
@@ -989,7 +993,7 @@ invalid: Hello world"""
 
         with patch("srt_labeler.pipeline.ApiBackend") as mock_backend_class:
             # Configure the mock to return a new mock instance each time
-            mock_backend_class.side_effect = lambda config: Mock(spec=ApiBackend)
+            mock_backend_class.side_effect = lambda _: Mock(spec=ApiBackend)
 
             # Simulate multiple thread initializations
             pipeline._initialize_worker()
@@ -1001,7 +1005,8 @@ invalid: Hello world"""
             # Each initialization should create a new backend instance
             assert first_backend is not second_backend
 
-    def test_process_transcriptions_empty_list(self, pipeline_args, mock_lwe_setup):
+    @pytest.mark.usefixtures("mock_lwe_setup")
+    def test_process_transcriptions_empty_list(self, pipeline_args):
         pipeline = SrtLabelerPipeline(**pipeline_args)
 
         # Should handle empty list gracefully
@@ -1184,18 +1189,16 @@ invalid: Hello world"""
             transcription_id=123, success=True, transcription="test content"
         )
 
-        with patch.multiple(
-            pipeline,
-            build_update_url=Mock(return_value="https://test.com/update"),
-            _execute_update_request=Mock(),
-            _handle_update_response=Mock(),
+        update_url = "https://test.com/update"
+        with (
+            patch.object(pipeline, 'build_update_url', return_value=update_url) as mock_build_url,
+            patch.object(pipeline, '_execute_update_request') as mock_execute,
+            patch.object(pipeline, '_handle_update_response') as mock_handle
         ):
             pipeline.update_transcription(result)
-
-            # Verify the flow
-            pipeline.build_update_url.assert_called_once()
-            pipeline._execute_update_request.assert_called_once()
-            pipeline._handle_update_response.assert_called_once()
+            mock_build_url.assert_called_once()
+            mock_execute.assert_called_once_with(update_url, ANY)
+            mock_handle.assert_called_once_with(mock_execute.return_value)
 
     def test_update_transcription_request_error(self, pipeline_args):
         """Test handling of request error during update."""
@@ -1387,30 +1390,30 @@ invalid
         assert result.transcription_id == 123
         assert "Invalid SRT format" in str(result.error)
 
-    def test_process_transcription_direct(self, pipeline_args, mock_lwe_setup):
+    @pytest.mark.usefixtures("mock_lwe_setup")
+    def test_process_transcription_direct(self, pipeline_args):
         """Test direct processing of a single transcription."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         pipeline._initialize_worker()
 
         transcription = {"id": 123, "transcription": "test content"}
 
-        # Mock the internal methods
-        with patch.multiple(
-            pipeline,
-            _process_with_error_handling=Mock(
-                return_value=TranscriptionResult(
-                    transcription_id=123,
-                    success=True,
-                    transcription="processed content",
-                )
-            ),
-            update_transcription=Mock(),
+        mock_result = TranscriptionResult(
+            transcription_id=123,
+            success=True,
+            transcription="processed content",
+        )
+
+        # Mock the internal methods using individual patches
+        with (
+            patch.object(pipeline, '_process_with_error_handling', return_value=mock_result) as mock_process,
+            patch.object(pipeline, 'update_transcription') as mock_update
         ):
             pipeline._process_transcription(transcription)
 
             # Verify internal method calls
-            pipeline._process_with_error_handling.assert_called_once_with(transcription)
-            pipeline.update_transcription.assert_called_once()
+            mock_process.assert_called_once_with(transcription)
+            mock_update.assert_called_once_with(mock_result)
 
     def test_update_transcription_direct(self, pipeline_args):
         """Test direct update of a transcription result."""
@@ -1419,18 +1422,17 @@ invalid
             transcription_id=123, success=True, transcription="test content"
         )
 
-        with patch.multiple(
-            pipeline,
-            build_update_url=Mock(return_value="test_url"),
-            _execute_update_request=Mock(),
-            _handle_update_response=Mock(),
+        with (
+            patch.object(pipeline, 'build_update_url', return_value="test_url") as mock_build_url,
+            patch.object(pipeline, '_execute_update_request') as mock_execute,
+            patch.object(pipeline, '_handle_update_response') as mock_handle
         ):
             pipeline.update_transcription(result)
 
             # Verify the exact flow
-            pipeline.build_update_url.assert_called_once()
-            pipeline._execute_update_request.assert_called_once()
-            pipeline._handle_update_response.assert_called_once()
+            mock_build_url.assert_called_once()
+            mock_execute.assert_called_once()
+            mock_handle.assert_called_once()
 
     def test_attempt_model_processing_direct(self, pipeline_args, audio_transcription):
         """Test direct model processing attempt."""

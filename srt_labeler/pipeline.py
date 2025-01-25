@@ -553,6 +553,7 @@ class SrtLabelerPipeline:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit."""
+        del exc_type, exc_val, exc_tb
         self.cleanup()
 
     def _attempt_model_processing(

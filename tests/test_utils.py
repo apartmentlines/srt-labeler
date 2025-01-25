@@ -44,7 +44,7 @@ def test_get_request_success(mock_get):
 
 @patch("requests.get")
 @patch("tenacity.nap.time.sleep")  # Patch sleep to avoid delays
-def test_get_request_failure(mock_sleep, mock_get):
+def test_get_request_failure(_, mock_get):
     mock_get.side_effect = requests.exceptions.RequestException
     with pytest.raises(tenacity.RetryError):
         get_request("http://example.com", params={"api_key": "test_key"})
@@ -61,7 +61,7 @@ def test_post_request_success(mock_post):
 
 @patch("requests.post")
 @patch("tenacity.nap.time.sleep")  # Patch sleep to avoid delays
-def test_post_request_failure(mock_sleep, mock_post):
+def test_post_request_failure(_, mock_post):
     mock_post.side_effect = requests.exceptions.RequestException
     with pytest.raises(tenacity.RetryError):
         post_request("http://example.com", data={"key": "value"})

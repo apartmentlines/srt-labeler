@@ -118,7 +118,7 @@ class SrtMerger:
         except (IOError, UnicodeDecodeError) as e:
             raise SrtMergeError(f"Failed to read file {path}: {str(e)}")
 
-    def merge(self, unlabeled_srt: str, labeled_srt: str) -> str:
+    def merge(self, unlabeled_srt: str | None, labeled_srt: str | None) -> str:
         """Merge speaker labels from labeled SRT into unlabeled content.
 
         :param unlabeled_srt: SRT content without speaker labels
@@ -144,7 +144,7 @@ class SrtMerger:
         return self.srt_module.compose(labeled_subs)
 
 
-def parse_arguments(args=None) -> argparse.Namespace:
+def parse_arguments() -> argparse.Namespace:
     """Parse command line arguments for SRT merging.
 
     :param args: Argument list to parse
@@ -175,9 +175,7 @@ def parse_arguments(args=None) -> argparse.Namespace:
 
 def main(args=None) -> None:
     """Main entry point for SRT merging script."""
-    if args is None:
-        args = sys.argv[1:]
-    args = parse_arguments(args)
+    args = parse_arguments()
     try:
         merger = SrtMerger(valid_labels=args.valid_labels, debug=args.debug)
         unlabeled_content = merger.read_file(args.unlabeled_srt)

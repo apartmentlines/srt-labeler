@@ -92,8 +92,8 @@ class TestTranscriptionPipeline:
         params = srt_labeler.build_retrieve_request_params()
         assert params == {
             "api_key": "test_key",
-            "min_id": 100,
-            "max_id": 200,
+            "min_id": "100",
+            "max_id": "200",
         }
 
     def test_build_retrieve_request_params_partial_filters(self):
@@ -105,7 +105,7 @@ class TestTranscriptionPipeline:
             min_id=100,
         )
         params = srt_labeler.build_retrieve_request_params()
-        assert params == {"api_key": "test_key", "min_id": 100}
+        assert params == {"api_key": "test_key", "min_id": "100"}
 
     @patch("srt_labeler.main.get_request")
     def test_retrieve_transcription_data_with_filters(self, mock_get_request):
@@ -129,7 +129,7 @@ class TestTranscriptionPipeline:
 
         mock_get_request.assert_called_once_with(
             srt_labeler.build_retrieve_request_url(),
-            {"api_key": "test_key", "min_id": 100, "max_id": 200},
+            {"api_key": "test_key", "min_id": "100", "max_id": "200"},
         )
 
     def test_cli_arguments_with_filters(self):
