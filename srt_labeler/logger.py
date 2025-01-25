@@ -24,11 +24,13 @@ class Logger:
             logger.removeHandler(handler)
 
         handler = logging.StreamHandler()
+        handler.setLevel(level)
         handler.setFormatter(logging.Formatter(STREAM_FORMAT))
         logger.addHandler(handler)
 
         if log_file:
             log_file_handler = logging.FileHandler(log_file, "a")
+            log_file_handler.setLevel(level)
             log_file_handler.setFormatter(logging.Formatter(FILE_FORMAT))
             log_file_handler.setLevel(level)
             logger.addHandler(log_file_handler)
