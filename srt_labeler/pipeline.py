@@ -620,7 +620,7 @@ class SrtLabelerPipeline:
             return self._create_model_failure_result(transcription["id"], error)
 
         return self._process_model_response(
-            transcription["id"], transcription["transcription"], response
+            transcription["id"], transcription["transcription"], response, use_fallback
         )
 
     def _run_model_with_template(
@@ -655,7 +655,11 @@ class SrtLabelerPipeline:
         )
 
     def _process_model_response(
-        self, transcription_id: int, original_content: str, model_response: str | None
+        self,
+        transcription_id: int,
+        original_content: str,
+        model_response: str | None,
+        use_fallback: bool,
     ) -> TranscriptionResult:
         """Process successful model response.
 
@@ -677,6 +681,10 @@ class SrtLabelerPipeline:
                 transcription=merged_content,
             )
         except Exception as e:
+            self.log.error(f"Error processing model response: {e}")
+            self.stats.log_model_response_error(
+                transcription_id, str(e), original_content, model_response, use_fallback
+            )
             return TranscriptionResult(
                 transcription_id=transcription_id, success=False, error=e
             )

@@ -37,6 +37,7 @@ class StatsDatabase:
                 cursor.execute(
                     """
                     CREATE TABLE IF NOT EXISTS totals (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
                         llm_primary INTEGER,
                         llm_fallback INTEGER,
                         llm_total INTEGER,
@@ -44,13 +45,22 @@ class StatsDatabase:
                     )
                 """
                 )
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS model_response_errors (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        transcription_id INTEGER,
+                        error TEXT,
+                        original_content TEXT,
+                        model_response TEXT,
+                        fallback INTEGER
+                    )
+                """
+                )
                 cursor.execute("SELECT COUNT(*) FROM totals")
                 if cursor.fetchone()[0] == 0:
-                    cursor.execute(
-                        """INSERT INTO totals 
-                        (llm_primary, llm_fallback, llm_total, hard_failures) 
-                        VALUES (0, 0, 0, 0)"""
-                    )
+                    query = "INSERT INTO totals (llm_primary, llm_fallback, llm_total, hard_failures) VALUES (0, 0, 0, 0)"
+                    cursor.execute(query)
                 conn.commit()
         except sqlite3.Error as e:
             self.log.error(f"Failed to initialize stats database: {e}")
@@ -110,6 +120,33 @@ class StatsDatabase:
                 conn.commit()
         except sqlite3.Error as e:
             self.log.error(f"Failed to increment hard failure counter: {e}")
+
+    def log_model_response_error(
+        self,
+        transcription_id: int,
+        error: str,
+        original_content: str,
+        model_response: str | None,
+        use_fallback: bool,
+    ) -> None:
+        try:
+            with self.lock:
+                conn = self._get_conn()
+                cursor = conn.cursor()
+                self.log.debug("Adding model response error")
+                cursor.execute(
+                    "INSERT INTO model_response_errors (transcription_id, error, original_content, model_response, fallback) VALUES (?, ?, ?, ?, ?)",
+                    (
+                        transcription_id,
+                        error,
+                        original_content,
+                        model_response,
+                        use_fallback,
+                    ),
+                )
+                conn.commit()
+        except sqlite3.Error as e:
+            self.log.error(f"Failed to log model response error: {e}")
 
     def close(self) -> None:
         """Close database connection."""

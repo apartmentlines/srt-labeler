@@ -18,7 +18,16 @@ class TestStatsDatabase:
         stats = StatsDatabase(test_db)
         assert stats.db_path == test_db
         assert hasattr(stats, "lock")
-        # Verify we can get totals (which requires a working connection)
+
+        # Verify tables exist
+        conn = sqlite3.connect(test_db)
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        tables = {row[0] for row in cursor.fetchall()}
+        assert "totals" in tables
+        assert "model_response_errors" in tables
+
+        # Verify we can get totals
         totals = stats.get_totals()
         assert isinstance(totals, tuple)
         assert len(totals) == 4  # primary, fallback, total, hard_failures
@@ -206,3 +215,46 @@ class TestStatsDatabase:
         assert totals[0] == thread_count * increments_per_thread  # primary
         assert totals[1] == thread_count * increments_per_thread  # fallback
         assert totals[2] == thread_count * increments_per_thread * 2  # total
+
+    def test_log_model_response_error_success(self, test_db):
+        stats = StatsDatabase(test_db)
+        stats.log_model_response_error(123, "test error", "original", "response", False)
+
+        conn = sqlite3.connect(test_db)
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM model_response_errors")
+        row = cursor.fetchone()
+        assert row[1] == 123
+        assert row[2] == "test error"
+        assert row[3] == "original"
+        assert row[4] == "response"
+        assert row[5] == False
+
+    def test_log_model_response_error_error_handling(self, test_db):
+        stats = StatsDatabase(test_db)
+        stats.db_path = "/nonexistent/path/db.sqlite"
+        stats.log_model_response_error(123, "test error", "original", "response", False)
+
+    def test_thread_safety_model_response_errors(self, test_db):
+        stats = StatsDatabase(test_db)
+        thread_count = 4
+        logs_per_thread = 10
+
+        def log_errors():
+            for i in range(logs_per_thread):
+                stats.log_model_response_error(i, "error", "content", "response", False)
+
+        threads = []
+        for _ in range(thread_count):
+            t = threading.Thread(target=log_errors)
+            threads.append(t)
+            t.start()
+
+        for t in threads:
+            t.join()
+
+        conn = sqlite3.connect(test_db)
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM model_response_errors")
+        count = cursor.fetchone()[0]
+        assert count == thread_count * logs_per_thread

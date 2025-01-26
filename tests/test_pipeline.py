@@ -1380,6 +1380,8 @@ Operator: Hello world
     def test_process_model_response_success(self, pipeline_args):
         """Test successful processing of model response."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
+        mock_stats = Mock()
+        pipeline.stats = mock_stats
 
         original_content = """1
 00:00:01,000 --> 00:00:02,000
@@ -1393,25 +1395,41 @@ Hello world"""
 Operator: Hello world
 </transcript>"""
 
-        result = pipeline._process_model_response(123, original_content, model_response)
+        result = pipeline._process_model_response(
+            123, original_content, model_response, False
+        )
         assert result.success is True
         assert result.transcription_id == 123
         assert result.transcription and "Operator: Hello world" in result.transcription
+        mock_stats.log_model_response_error.assert_not_called()
 
     def test_process_model_response_extraction_error(self, pipeline_args):
         """Test handling of transcript extraction error."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
+        mock_stats = Mock()
+        pipeline.stats = mock_stats
 
         result = pipeline._process_model_response(
-            123, "test content", "invalid response"
+            123, "test content", "invalid response", False
         )
         assert result.success is False
         assert result.transcription_id == 123
         assert isinstance(result.error, ModelResponseFormattingError)
+        assert "No transcript section found in the text" in str(result.error)
+
+        mock_stats.log_model_response_error.assert_called_once_with(
+            123,
+            "No transcript section found in the text",
+            "test content",
+            "invalid response",
+            False
+        )
 
     def test_process_model_response_merge_error(self, pipeline_args):
         """Test handling of merge error."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
+        mock_stats = Mock()
+        pipeline.stats = mock_stats
 
         model_response = """
 <thinking>Analysis</thinking>
@@ -1419,10 +1437,21 @@ Operator: Hello world
 invalid
 </transcript>"""
 
-        result = pipeline._process_model_response(123, "test content", model_response)
+        result = pipeline._process_model_response(
+            123, "test content", model_response, True
+        )
         assert result.success is False
         assert result.transcription_id == 123
+        assert isinstance(result.error, SrtMergeError)
         assert "Invalid SRT format" in str(result.error)
+
+        mock_stats.log_model_response_error.assert_called_once_with(
+            123,
+            str(result.error),
+            "test content",
+            model_response,
+            True
+        )
 
     @pytest.mark.usefixtures("mock_lwe_setup")
     def test_process_transcription_direct(self, pipeline_args):
