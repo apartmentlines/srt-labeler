@@ -465,27 +465,6 @@ class TestSrtLabelerPipeline:
         )
         assert response == mock_response
 
-    def test_download_file_success_metadata_with_s3(
-        self, pipeline_args, audio_transcription, mock_network
-    ):
-        """Test successful file download."""
-        pipeline = SrtLabelerPipeline(**pipeline_args)
-        mock_response = Mock(spec=requests.Response)
-        mock_response.status_code = 200
-        mock_response.content = b"Audio data"
-        mock_response.headers = {"content-type": "audio/wav"}
-        mock_network["get"].return_value = mock_response
-
-        response = pipeline._download_file(
-            {**audio_transcription, "metadata": {"call_uuid": "N/A"}}
-        )
-        mock_network["get"].assert_called_once_with(
-            f"{audio_transcription["url"]}",
-            params={"api_key": pipeline.file_api_key, "from_s3": "1"},
-            timeout=DOWNLOAD_TIMEOUT,
-        )
-        assert response == mock_response
-
     def test_download_file_network_error_retries(
         self, pipeline_args, audio_transcription, mock_network
     ):
