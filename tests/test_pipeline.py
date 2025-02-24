@@ -18,7 +18,9 @@ from srt_labeler.pipeline import (
     TranscriptionResult,
     TranscriptionErrorHandler,
     ApiPayloadBuilder,
+    FallbackResultValidator,
 )
+from srt_labeler.merger import SrtMerger
 from srt_labeler.merger import SrtMergeError
 from srt_labeler.constants import (
     DEFAULT_RETRY_ATTEMPTS,
@@ -1570,14 +1572,25 @@ invalid
         """Test direct error handling process."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
 
-        mock_determine = Mock(
+        # For the valid fallback content case
+        mock_determine_valid = Mock(
+            return_value=TranscriptionResult(
+                transcription_id=audio_transcription["id"],
+                success=True,
+                transcription="1\n00:00:01,000 --> 00:00:02,000\noperator: test\n",
+            )
+        )
+
+        # For the invalid/error cases
+        mock_determine_error = Mock(
             return_value=TranscriptionResult(
                 transcription_id=audio_transcription["id"],
                 success=False,
                 error=Exception("final error"),
             )
         )
-        pipeline._determine_final_error_result = mock_determine
+
+        pipeline._determine_final_error_result = mock_determine_valid
         fallback_success = TranscriptionResult(
             transcription_id=audio_transcription["id"],
             success=True,
@@ -1617,9 +1630,10 @@ invalid
             result = pipeline._process_with_error_handling(audio_transcription)
             assert result.success is True
             assert result.transcription == "success"
-            mock_determine.assert_not_called()  # Verify not called on success
+            mock_determine_valid.assert_not_called()  # Verify not called on success
 
-        mock_determine.reset_mock()
+
+        mock_determine_valid.reset_mock()
 
         # Test fallback after primary failure
         with patch.object(
@@ -1630,25 +1644,56 @@ invalid
             result = pipeline._process_with_error_handling(audio_transcription)
             assert result.success is True
             assert result.transcription == "fallback success"
-            mock_determine.assert_not_called()  # Verify not called on fallback success
+            mock_determine_valid.assert_not_called()  # Verify not called on fallback success
 
-        mock_determine.reset_mock()
+        mock_determine_valid.reset_mock()
 
-        # Test primary hard error, fallback hard error
+        # Test primary hard error, fallback hard error with valid content
+        ai_content = "1\n00:00:01,000 --> 00:00:02,000\noperator: test\n"
+        fallback_valid = TranscriptionResult(
+            transcription_id=audio_transcription["id"],
+            success=False,
+            error=SrtMergeError("fallback hard error"),
+            ai_content=ai_content,
+        )
         with patch.object(
             pipeline,
             "_attempt_model_processing",
-            side_effect=[primary_hard_error, fallback_hard_error],
+            side_effect=[primary_hard_error, fallback_valid],
         ):
             result = pipeline._process_with_error_handling(audio_transcription)
-            mock_determine.assert_called_once_with(
-                audio_transcription["id"], primary_hard_error, fallback_hard_error
+            mock_determine_valid.assert_called_once_with(
+                audio_transcription["id"], primary_hard_error, fallback_valid
+            )
+            assert result.success is True
+            assert result.transcription == ai_content
+
+        mock_determine_valid.reset_mock()
+
+        # Switch to error mock for remaining tests
+        pipeline._determine_final_error_result = mock_determine_error
+
+        # Test primary hard error, fallback hard error with invalid content
+        fallback_invalid = TranscriptionResult(
+            transcription_id=audio_transcription["id"],
+            success=False,
+            error=SrtMergeError("fallback hard error"),
+            ai_content="1\n00:00:01,000 --> 00:00:02,000\ninvalid: test\n",
+        )
+        with patch.object(
+            pipeline,
+            "_attempt_model_processing",
+            side_effect=[primary_hard_error, fallback_invalid],
+        ):
+            result = pipeline._process_with_error_handling(audio_transcription)
+            mock_determine_error.assert_called_once_with(
+                audio_transcription["id"], primary_hard_error, fallback_invalid
             )
             assert result.success is False
             assert isinstance(result.error, Exception)
             assert "final error" in str(result.error)
 
-        mock_determine.reset_mock()
+        mock_determine_error.reset_mock()
 
         # Test primary transient error, fallback transient
         with patch.object(
@@ -1657,14 +1702,14 @@ invalid
             side_effect=[primary_transient, fallback_transient],
         ):
             result = pipeline._process_with_error_handling(audio_transcription)
-            mock_determine.assert_called_once_with(
+            mock_determine_error.assert_called_once_with(
                 audio_transcription["id"], primary_transient, fallback_transient
             )
             assert result.success is False
             assert isinstance(result.error, Exception)
             assert "final error" in str(result.error)
 
-        mock_determine.reset_mock()
+        mock_determine_error.reset_mock()
 
         # Test primary hard error, fallback transient
         with patch.object(
@@ -1673,7 +1718,7 @@ invalid
             side_effect=[primary_hard_error, fallback_transient],
         ):
             result = pipeline._process_with_error_handling(audio_transcription)
-            mock_determine.assert_called_once_with(
+            mock_determine_error.assert_called_once_with(
                 audio_transcription["id"], primary_hard_error, fallback_transient
             )
             assert result.success is False
@@ -1681,7 +1726,7 @@ invalid
             assert "final error" in str(result.error)
 
         # Reset mock for next test
-        mock_determine.reset_mock()
+        mock_determine_error.reset_mock()
 
         # Test primary transient error, fallback hard
         with patch.object(
@@ -1690,7 +1735,7 @@ invalid
             side_effect=[primary_transient, fallback_hard_error],
         ):
             result = pipeline._process_with_error_handling(audio_transcription)
-            mock_determine.assert_called_once_with(
+            mock_determine_error.assert_called_once_with(
                 audio_transcription["id"], primary_transient, fallback_hard_error
             )
             assert result.success is False
@@ -1715,7 +1760,8 @@ invalid
         fallback_hard = TranscriptionResult(
             transcription_id=123,
             success=False,
-            error=ModelResponseFormattingError("fallback hard error"),
+            error=SrtMergeError("fallback hard error"),
+            ai_content="1\n00:00:01,000 --> 00:00:02,000\noperator: test\n",
         )
         fallback_transient = TranscriptionResult(
             transcription_id=123,
@@ -1723,7 +1769,7 @@ invalid
             error=Exception("fallback transient error"),
         )
 
-        # Test when both errors are hard (should return fallback result)
+        # Test when both errors are hard and fallback content is valid
         with patch.object(
             TranscriptionErrorHandler, "should_update_with_error", return_value=True
         ) as mock_should_update:
@@ -1733,8 +1779,25 @@ invalid
             mock_should_update.assert_called_once_with(
                 primary_hard.error, fallback_hard.error
             )
-            assert result == fallback_hard
-            assert isinstance(result.error, ModelResponseFormattingError)
+            assert result.success is True
+            assert result.transcription == fallback_hard.ai_content
+            assert result.transcription_id == 123
+
+        # Test when both errors are hard but fallback content is invalid
+        invalid_fallback = TranscriptionResult(
+            transcription_id=123,
+            success=False,
+            error=SrtMergeError("fallback hard error"),
+            ai_content="1\n00:00:01,000 --> 00:00:02,000\ninvalid: test\n",
+        )
+        with patch.object(
+            TranscriptionErrorHandler, "should_update_with_error", return_value=True
+        ):
+            result = pipeline._determine_final_error_result(
+                123, primary_hard, invalid_fallback
+            )
+            assert result == invalid_fallback
+            assert isinstance(result.error, SrtMergeError)
             assert result.transcription_id == 123
             assert result.success is False
 
@@ -2121,6 +2184,64 @@ class TestTranscriptionResult:
             error=ModelResponseFormattingError("Hard"),
         )
         assert result.is_hard_error() is True
+
+
+class TestFallbackResultValidator:
+    """Test suite for FallbackResultValidator class."""
+
+    @pytest.fixture
+    def merger(self):
+        """Fixture providing a configured SrtMerger instance."""
+        return SrtMerger()
+
+    @pytest.fixture
+    def validator(self, merger):
+        """Fixture providing a configured FallbackResultValidator instance."""
+        return FallbackResultValidator(merger)
+
+    def test_initialization(self, merger):
+        """Test validator initialization with SrtMerger."""
+        validator = FallbackResultValidator(merger)
+        assert validator.merger == merger
+
+    def test_should_accept_fallback_valid(self, validator):
+        """Test validation with valid SrtMergeError and valid labels."""
+        error = SrtMergeError("test error")
+        content = """1
+00:00:01,000 --> 00:00:02,000
+operator: Hello world"""
+
+        assert validator.should_accept_fallback(error, content) is True
+
+    def test_should_accept_fallback_invalid_labels(self, validator):
+        """Test validation with SrtMergeError but invalid labels."""
+        error = SrtMergeError("test error")
+        content = """1
+00:00:01,000 --> 00:00:02,000
+invalid: Hello world"""
+
+        assert validator.should_accept_fallback(error, content) is False
+
+    def test_should_accept_fallback_wrong_error_type(self, validator):
+        """Test validation with non-SrtMergeError."""
+        error = Exception("test error")
+        content = """1
+00:00:01,000 --> 00:00:02,000
+operator: Hello world"""
+
+        assert validator.should_accept_fallback(error, content) is False
+
+    def test_should_accept_fallback_empty_content(self, validator):
+        """Test validation with empty content."""
+        error = SrtMergeError("test error")
+        assert validator.should_accept_fallback(error, "") is False
+        assert validator.should_accept_fallback(error, None) is False
+
+    def test_should_accept_fallback_invalid_srt(self, validator):
+        """Test validation with invalid SRT format."""
+        error = SrtMergeError("test error")
+        content = "not valid srt content"
+        assert validator.should_accept_fallback(error, content) is False
 
 
 class TestBaseError:

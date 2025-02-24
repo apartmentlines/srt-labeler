@@ -136,6 +136,40 @@ def test_extract_speaker_numeric():
     assert merger._extract_speaker("speaker2: test") == "speaker2"
 
 
+def test_validate_srt_labels_valid_content():
+    """Test validation of valid SRT content with correct labels."""
+    merger = SrtMerger()
+    content = """1
+00:00:01,000 --> 00:00:02,000
+operator: Hello world
+
+2
+00:00:02,000 --> 00:00:03,000
+caller: Hi there"""
+
+    assert merger.validate_srt_labels(content) is True
+
+def test_validate_srt_labels_invalid_labels():
+    """Test validation of SRT content with invalid labels."""
+    merger = SrtMerger()
+    content = """1
+00:00:01,000 --> 00:00:02,000
+invalid: Hello world"""
+
+    assert merger.validate_srt_labels(content) is False
+
+def test_validate_srt_labels_empty_content():
+    """Test validation with empty content."""
+    merger = SrtMerger()
+    assert merger.validate_srt_labels("") is False
+    assert merger.validate_srt_labels(None) is False
+
+def test_validate_srt_labels_invalid_format():
+    """Test validation with malformed SRT content."""
+    merger = SrtMerger()
+    content = "not a valid srt format"
+    assert merger.validate_srt_labels(content) is False
+
 def test_timing_preservation():
     """Test timing information is preserved throughout the pipeline."""
     merger = SrtMerger()

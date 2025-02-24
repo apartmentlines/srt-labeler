@@ -61,6 +61,21 @@ class SrtMerger:
         if len(subs_without) != len(subs_with):
             raise SrtMergeError("SRT files have different number of subtitles")
 
+    def validate_srt_labels(self, content: str) -> bool:
+        """Validate all speaker labels in SRT content are valid.
+
+        :param content: SRT content to validate
+        :return: True if all labels are valid
+        """
+        if not content:
+            return False
+        try:
+            subs = self._parse_srt_content(content)
+            self._validate_labels(subs)
+            return True
+        except Exception:
+            return False
+
     def _validate_labels(self, subs: List[srt.Subtitle]) -> None:
         """Validate speaker labels in subtitles.
 

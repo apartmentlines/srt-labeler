@@ -37,6 +37,7 @@ class TranscriptionResult:
     success: bool  # Indicates if labeling succeeded, not API success
     transcription: Optional[str] = None
     error: Optional[Exception] = None
+    ai_content: Optional[str] = None  # Raw AI-generated SRT before merge
 
     @property
     def requires_api_update(self) -> bool:
@@ -58,6 +59,29 @@ class TranscriptionResult:
         return isinstance(
             self.error,
             (SrtMergeError, ModelResponseFormattingError, RequestFileNotFoundError),
+        )
+
+
+class FallbackResultValidator:
+    """Validates if a fallback model result should be accepted in full."""
+
+    def __init__(self, merger: SrtMerger) -> None:
+        """Initialize the validator.
+
+        :param merger: SRT merger instance
+        """
+        self.merger: SrtMerger = merger
+
+    def should_accept_fallback(self, error: Exception, ai_content: str) -> bool:
+        """Determine if fallback model output should be accepted.
+
+        :param error: The error from merge attempt
+        :param ai_content: Raw AI-generated SRT content
+        :return: True if fallback content should be accepted
+        """
+        return (
+            isinstance(error, SrtMergeError)
+            and self.merger.validate_srt_labels(ai_content)
         )
 
 
@@ -655,9 +679,11 @@ class SrtLabelerPipeline:
         :param transcription_id: ID of the transcription
         :param original_content: Original SRT content
         :param model_response: Response from the AI model
+        :param use_fallback: Whether to use fallback model
         :return: TranscriptionResult with processed content or error
         """
         self.log.debug("Processing model response")
+        ai_labeled_content = None
         try:
             ai_labeled_content = self._extract_transcript_section(model_response)
             merged_content = self._merge_srt_content(
@@ -675,7 +701,10 @@ class SrtLabelerPipeline:
                 transcription_id, str(e), original_content, model_response, use_fallback
             )
             return TranscriptionResult(
-                transcription_id=transcription_id, success=False, error=e
+                transcription_id=transcription_id,
+                success=False,
+                error=e,
+                ai_content=ai_labeled_content,
             )
 
     def _process_with_error_handling(self, transcription: Dict) -> TranscriptionResult:
@@ -718,12 +747,51 @@ class SrtLabelerPipeline:
         :return: TranscriptionResult with appropriate error handling
         """
         self.log.debug("Both attempts failed, determining final result")
-        if self.error_handler.should_update_with_error(
-            primary_result.error, fallback_result.error
-        ):
-            self.log.warning("Both labeling errors hard, sending error state to API")
-            self.stats.increment_hard_failure()
-            return fallback_result  # Use fallback error for final result
+
+        if self.error_handler.should_update_with_error(primary_result.error, fallback_result.error):
+            return self._handle_hard_error_case(transcription_id, fallback_result)
+
+        return self._handle_transient_error_case(transcription_id, primary_result, fallback_result)
+
+    def _handle_hard_error_case(
+        self,
+        transcription_id: int,
+        fallback_result: TranscriptionResult,
+    ) -> TranscriptionResult:
+        """Handle case where both errors are hard errors.
+
+        :param transcription_id: ID of the transcription
+        :param fallback_result: Result from fallback model attempt
+        :return: TranscriptionResult with validated content or error
+        """
+        self.log.warning("Both labeling errors hard, checking fallback content")
+        validator = FallbackResultValidator(self.merger)
+
+        if validator.should_accept_fallback(fallback_result.error, fallback_result.ai_content):
+            self.log.info("Fallback content validated, using raw AI output")
+            return TranscriptionResult(
+                transcription_id=transcription_id,
+                success=True,
+                transcription=fallback_result.ai_content
+            )
+
+        self.log.warning("Both labeling errors hard, sending error state to API")
+        self.stats.increment_hard_failure()
+        return fallback_result
+
+    def _handle_transient_error_case(
+        self,
+        transcription_id: int,
+        primary_result: TranscriptionResult,
+        fallback_result: TranscriptionResult,
+    ) -> TranscriptionResult:
+        """Handle case where at least one error is transient.
+
+        :param transcription_id: ID of the transcription
+        :param primary_result: Result from primary model attempt
+        :param fallback_result: Result from fallback model attempt
+        :return: TranscriptionResult with transient error
+        """
         transient_error = (
             primary_result.error
             if not primary_result.is_hard_error()
