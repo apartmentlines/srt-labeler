@@ -204,6 +204,21 @@ class TestTranscriptionPipeline:
                 # Should have called process_transcriptions once before exiting
                 mock_process.assert_called_once()
 
+    def test_run_single(self, srt_labeler):
+        """Test that run_single retrieves transcriptions and processes them."""
+        test_transcriptions = [{"id": "1", "url": "url1"}]
+
+        with patch.object(srt_labeler, "retrieve_transcription_data", return_value=test_transcriptions) as mock_retrieve:
+            with patch.object(srt_labeler.pipeline, "process_transcriptions") as mock_process:
+                srt_labeler.run_single()
+
+                # Should have called retrieve_transcription_data once
+                mock_retrieve.assert_called_once()
+                # Should have called process_transcriptions once with the retrieved transcriptions
+                mock_process.assert_called_once_with(test_transcriptions)
+                # Should have set running to True
+                assert srt_labeler.running is True
+
     @patch("signal.signal")
     def test_signal_handler(self, mock_signal, srt_labeler):
         """Test that the signal handler is properly set up and works."""
