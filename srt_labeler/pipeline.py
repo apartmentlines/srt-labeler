@@ -7,7 +7,7 @@ from .stats import StatsDatabase
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Dict, Optional, Union
+from typing import List, Dict, Optional, Union, Any
 from dataclasses import dataclass
 from tenacity import retry, stop_after_attempt, wait_exponential
 from langchain_core.messages import HumanMessage
@@ -469,7 +469,7 @@ class SrtLabelerPipeline:
         self.log.debug("Successfully merged SRT content")
         return merged
 
-    def _process_transcription(self, transcription: Dict) -> None:
+    def _process_transcription(self, transcription: dict[str, Any]) -> None:
         """Process a single transcription using the thread's LWE backend.
 
         :param transcription: Transcription data to process
@@ -481,7 +481,7 @@ class SrtLabelerPipeline:
         if result.requires_api_update:
             self.update_transcription(result)
 
-    def process_transcriptions(self, transcriptions: List[Dict]) -> None:
+    def process_transcriptions(self, transcriptions: list[dict[str, Any]]) -> None:
         """Process transcriptions using thread pool.
 
         :param transcriptions: List of transcriptions to process
