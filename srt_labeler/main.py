@@ -114,15 +114,16 @@ class SrtLabeler:
         # Set up signal handler for graceful shutdown
         signal.signal(signal.SIGINT, self._signal_handler)
 
-        while self.running:
-            transcriptions = self.retrieve_transcription_data()
-            with self.pipeline:  # Use context manager here
+        # Use context manager outside the loop
+        with self.pipeline:
+            while self.running:
+                transcriptions = self.retrieve_transcription_data()
                 self.pipeline.process_transcriptions(transcriptions)
-            self.log.debug(f"Sleeping for {sleep_seconds} seconds")
-            for _ in range(sleep_seconds):
-                if not self.running:
-                    break
-                time.sleep(1)
+                self.log.debug(f"Sleeping for {sleep_seconds} seconds")
+                for _ in range(sleep_seconds):
+                    if not self.running:
+                        break
+                    time.sleep(1)
 
     def run(self) -> None:
         self.log.info("Starting transcription pipeline")
