@@ -67,7 +67,7 @@ class SrtLabeler:
             params["max_id"] = str(self.max_id)
         return params
 
-    def retrieve_transcription_data(self) -> List[dict] | None:
+    def retrieve_transcription_data(self) -> list[dict[str, Any]] | None:
         url = self.build_retrieve_request_url()
         try:
             params = self.build_retrieve_request_params()
@@ -96,7 +96,7 @@ class SrtLabeler:
         set_environment_variables(self.api_key, self.file_api_key, self.domain)
         self.log.info("Configuration loaded successfully")
 
-    def run_single(self, transcriptions: list[dict[str, Any]]) -> None:
+    def run_single(self, transcriptions: list[dict[str, Any]] | None) -> None:
         self.running = True
         with self.pipeline:  # Use context manager here
             self.pipeline.process_transcriptions(transcriptions)
@@ -105,7 +105,7 @@ class SrtLabeler:
         self.log.info("Received interrupt signal, shutting down gracefully...")
         self.running = False
 
-    def run_continuous(self, transcriptions: list[dict[str, Any]], sleep_seconds: int) -> None:
+    def run_continuous(self, transcriptions: list[dict[str, Any]] | None, sleep_seconds: int) -> None:
         self.running = True
         self.log.info(f"Starting continuous mode with {sleep_seconds} second intervals")
         self.log.info("Press Ctrl+C to exit gracefully")
@@ -126,9 +126,6 @@ class SrtLabeler:
         self.log.info("Starting transcription pipeline")
         self.setup_configuration()
         transcriptions = self.retrieve_transcription_data()
-        if not transcriptions:
-            self.log.info("No transcriptions to process")
-            return
         self.log.info("Starting pipeline execution")
         if self.continuous:
             self.run_continuous(transcriptions, self.continuous)

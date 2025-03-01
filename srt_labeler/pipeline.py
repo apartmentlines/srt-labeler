@@ -481,11 +481,14 @@ class SrtLabelerPipeline:
         if result.requires_api_update:
             self.update_transcription(result)
 
-    def process_transcriptions(self, transcriptions: list[dict[str, Any]]) -> None:
+    def process_transcriptions(self, transcriptions: list[dict[str, Any]] | None) -> None:
         """Process transcriptions using thread pool.
 
         :param transcriptions: List of transcriptions to process
         """
+        if not transcriptions:
+            self.log.info("No transcriptions to process")
+            return
         self.log.info(f"Starting processing of {len(transcriptions)} transcriptions")
         # Submit all transcriptions to the thread pool and wait for completion
         futures = [
