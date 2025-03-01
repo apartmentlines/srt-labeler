@@ -152,26 +152,22 @@ class TestTranscriptionPipeline:
     @patch("srt_labeler.main.SrtLabeler.run_single")
     @patch("srt_labeler.main.SrtLabeler.run_continuous")
     def test_run_single_mode(self, mock_run_continuous, mock_run_single, srt_labeler):
-        transcriptions = [{"id": "1", "url": "url1"}]
-        with patch.object(srt_labeler, "retrieve_transcription_data", return_value=transcriptions):
-            srt_labeler.continuous = None
-            srt_labeler.run()
-            mock_run_single.assert_called_once_with(transcriptions)
-            mock_run_continuous.assert_not_called()
+        srt_labeler.continuous = None
+        srt_labeler.run()
+        mock_run_single.assert_called_once()
+        mock_run_continuous.assert_not_called()
 
     @patch("srt_labeler.main.SrtLabeler.run_single")
     @patch("srt_labeler.main.SrtLabeler.run_continuous")
     def test_run_continuous_mode(self, mock_run_continuous, mock_run_single, srt_labeler):
-        transcriptions = [{"id": "1", "url": "url1"}]
-        with patch.object(srt_labeler, "retrieve_transcription_data", return_value=transcriptions):
-            srt_labeler.continuous = 60
-            srt_labeler.run()
-            mock_run_continuous.assert_called_once_with(transcriptions, 60)
-            mock_run_single.assert_not_called()
+        srt_labeler.continuous = 60
+        srt_labeler.run()
+        mock_run_continuous.assert_called_once_with(60)
+        mock_run_single.assert_not_called()
 
     @patch("time.sleep")
     def test_run_continuous_loop(self, mock_sleep, srt_labeler):
-        transcriptions = [{"id": "1", "url": "url1"}]
+        test_transcriptions = [{"id": "1", "url": "url1"}]
         call_count = 0
 
         def side_effect(*_):
@@ -182,37 +178,44 @@ class TestTranscriptionPipeline:
 
         mock_sleep.side_effect = side_effect
 
-        with patch.object(srt_labeler.pipeline, "process_transcriptions") as mock_process:
-            srt_labeler.run_continuous(transcriptions, 5)
-            # Should have called process_transcriptions at least once
-            assert mock_process.call_count >= 1
-            # Should have attempted to sleep multiple times
-            assert mock_sleep.call_count >= 1
+        with patch.object(srt_labeler, "retrieve_transcription_data", return_value=test_transcriptions) as mock_retrieve:
+            with patch.object(srt_labeler.pipeline, "process_transcriptions") as mock_process:
+                srt_labeler.run_continuous(5)
+                # Should have called retrieve_transcription_data at least once
+                assert mock_retrieve.call_count >= 1
+                # Should have called process_transcriptions at least once
+                assert mock_process.call_count >= 1
+                # Should have attempted to sleep multiple times
+                assert mock_sleep.call_count >= 1
 
     def test_continuous_mode_graceful_exit(self, srt_labeler):
-        transcriptions = [{"id": "1", "url": "url1"}]
+        test_transcriptions = [{"id": "1", "url": "url1"}]
 
         def mock_process(*args):
             # Set running to False after first processing
             srt_labeler.running = False
 
-        with patch.object(srt_labeler.pipeline, "process_transcriptions", side_effect=mock_process) as mock_process:
-            srt_labeler.run_continuous(transcriptions, 60)
+        with patch.object(srt_labeler, "retrieve_transcription_data", return_value=test_transcriptions) as mock_retrieve:
+            with patch.object(srt_labeler.pipeline, "process_transcriptions", side_effect=mock_process) as mock_process:
+                srt_labeler.run_continuous(60)
 
-            # Should have called process_transcriptions once before exiting
-            mock_process.assert_called_once()
+                # Should have called retrieve_transcription_data once
+                mock_retrieve.assert_called_once()
+                # Should have called process_transcriptions once before exiting
+                mock_process.assert_called_once()
 
     @patch("signal.signal")
     def test_signal_handler(self, mock_signal, srt_labeler):
         """Test that the signal handler is properly set up and works."""
-        transcriptions = [{"id": "1", "url": "url1"}]
+        test_transcriptions = [{"id": "1", "url": "url1"}]
 
         # Mock the process_transcriptions to set running to False after first call
         def mock_process(*args):
             srt_labeler.running = False
 
-        with patch.object(srt_labeler.pipeline, "process_transcriptions", side_effect=mock_process):
-            srt_labeler.run_continuous(transcriptions, 5)
+        with patch.object(srt_labeler, "retrieve_transcription_data", return_value=test_transcriptions):
+            with patch.object(srt_labeler.pipeline, "process_transcriptions", side_effect=mock_process):
+                srt_labeler.run_continuous(5)
 
         # Verify signal handler was registered
         mock_signal.assert_any_call(signal.SIGINT, srt_labeler._signal_handler)

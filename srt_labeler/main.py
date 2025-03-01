@@ -96,8 +96,9 @@ class SrtLabeler:
         set_environment_variables(self.api_key, self.file_api_key, self.domain)
         self.log.info("Configuration loaded successfully")
 
-    def run_single(self, transcriptions: list[dict[str, Any]] | None) -> None:
+    def run_single(self) -> None:
         self.running = True
+        transcriptions = self.retrieve_transcription_data()
         with self.pipeline:  # Use context manager here
             self.pipeline.process_transcriptions(transcriptions)
 
@@ -105,7 +106,7 @@ class SrtLabeler:
         self.log.info("Received interrupt signal, shutting down gracefully...")
         self.running = False
 
-    def run_continuous(self, transcriptions: list[dict[str, Any]] | None, sleep_seconds: int) -> None:
+    def run_continuous(self, sleep_seconds: int) -> None:
         self.running = True
         self.log.info(f"Starting continuous mode with {sleep_seconds} second intervals")
         self.log.info("Press Ctrl+C to exit gracefully")
@@ -114,6 +115,7 @@ class SrtLabeler:
         signal.signal(signal.SIGINT, self._signal_handler)
 
         while self.running:
+            transcriptions = self.retrieve_transcription_data()
             with self.pipeline:  # Use context manager here
                 self.pipeline.process_transcriptions(transcriptions)
             self.log.debug(f"Sleeping for {sleep_seconds} seconds")
@@ -125,12 +127,11 @@ class SrtLabeler:
     def run(self) -> None:
         self.log.info("Starting transcription pipeline")
         self.setup_configuration()
-        transcriptions = self.retrieve_transcription_data()
         self.log.info("Starting pipeline execution")
         if self.continuous:
-            self.run_continuous(transcriptions, self.continuous)
+            self.run_continuous(self.continuous)
         else:
-            self.run_single(transcriptions)
+            self.run_single()
         self.log.info("Transcription pipeline completed")
 
 
