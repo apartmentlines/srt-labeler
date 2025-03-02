@@ -399,7 +399,7 @@ class SrtLabelerPipeline:
             return response
         except Exception as e:
             self.log.warning(
-                f"Error downloading {transcription["url"]}: {e}. Retrying..."
+                f"""Error downloading {transcription["url"]}: {e}. Retrying..."""
             )
             self._check_download_errors_http(response, e)
 
