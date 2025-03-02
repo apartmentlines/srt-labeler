@@ -399,7 +399,7 @@ class SrtLabelerPipeline:
             return response
         except Exception as e:
             self.log.warning(
-                f"""Error downloading {transcription["url"]}: {e}. Retrying..."""
+                f"Error downloading {transcription['url']}: {e}. Retrying..."
             )
             self._check_download_errors_http(response, e)
 
@@ -432,7 +432,7 @@ class SrtLabelerPipeline:
         }
         if fallback:
             self.log.warning(
-                f"Using backup preset for transcription {transcription["id"]} after failure"
+                f"Using backup preset for transcription {transcription['id']} after failure"
             )
             overrides["request_overrides"]["preset"] = LWE_FALLBACK_PRESET
             self.log.debug(f"Applied backup override: {LWE_FALLBACK_PRESET}")
