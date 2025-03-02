@@ -1,5 +1,6 @@
 import os
 import re
+import tempfile
 import json
 import copy
 from .constants import DEFAULT_STATS_DB
@@ -310,6 +311,7 @@ class SrtLabelerPipeline:
         config.set("model.default_preset", LWE_DEFAULT_PRESET)
         if self.debug:
             config.set("debug.log.enabled", True)
+            config.set("debug.log.filepath", "%s/%s" % (tempfile.gettempdir(), "lwe-srt-labeler-debug.log"))
 
         backend = ApiBackend(config)
         self.log.debug("LWE backend initialization complete")
