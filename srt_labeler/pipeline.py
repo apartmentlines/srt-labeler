@@ -1,6 +1,7 @@
 import os
 import re
 import tempfile
+import logging
 import json
 import copy
 from .constants import DEFAULT_STATS_DB
@@ -8,7 +9,8 @@ from .stats import StatsDatabase
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Dict, Optional, Union, Any
+from typing import Any
+from types import TracebackType
 from dataclasses import dataclass
 from tenacity import retry, stop_after_attempt, wait_exponential
 from langchain_core.messages import HumanMessage
@@ -36,9 +38,9 @@ class TranscriptionResult:
 
     transcription_id: int
     success: bool  # Indicates if labeling succeeded, not API success
-    transcription: Optional[str] = None
-    error: Optional[Exception] = None
-    ai_content: Optional[str] = None  # Raw AI-generated SRT before merge
+    transcription: str | None = None
+    error: Exception | None = None
+    ai_content: str | None = None  # Raw AI-generated SRT before merge
 
     @property
     def requires_api_update(self) -> bool:
@@ -73,7 +75,7 @@ class FallbackResultValidator:
         """
         self.merger: SrtMerger = merger
 
-    def should_accept_fallback(self, error: Exception, ai_content: str) -> bool:
+    def should_accept_fallback(self, error: Exception | None, ai_content: str | None) -> bool:
         """Determine if fallback model output should be accepted.
 
         :param error: The error from merge attempt
@@ -101,7 +103,7 @@ class TranscriptionErrorHandler:
         )
 
     def should_update_with_error(
-        self, primary_error: Optional[Exception], fallback_error: Optional[Exception]
+        self, primary_error: Exception | None, fallback_error: Exception | None
     ) -> bool:
         """Determine if we should send error state to API.
 
@@ -135,9 +137,9 @@ class ApiPayloadBuilder:
 
         :param api_key: API key for authentication
         """
-        self.api_key = api_key
+        self.api_key: str = api_key
 
-    def build_payload(self, result: TranscriptionResult) -> dict:
+    def build_payload(self, result: TranscriptionResult) -> dict[str, Any]:
         """Convert TranscriptionResult to API payload format.
 
         Always sets success=True in payload as it indicates
@@ -167,7 +169,7 @@ class ApiPayloadBuilder:
 class BaseError(Exception):
     """Base exception class."""
 
-    def __init__(self, message: str, cause: Optional[Exception] = None) -> None:
+    def __init__(self, message: str, cause: Exception | None = None) -> None:
         """Initialize API error.
 
         :param message: Error message
@@ -181,7 +183,7 @@ class BaseError(Exception):
 class AuthenticationError(BaseError):
     """Exception raised for authentication-related errors."""
 
-    def __init__(self, message: str, cause: Optional[Exception] = None) -> None:
+    def __init__(self, message: str, cause: Exception | None = None) -> None:
         """Initialize authentication error.
 
         :param message: Error message
@@ -193,7 +195,7 @@ class AuthenticationError(BaseError):
 class RequestError(BaseError):
     """Exception raised for errors during request construction or execution."""
 
-    def __init__(self, message: str, cause: Optional[Exception] = None) -> None:
+    def __init__(self, message: str, cause: Exception | None = None) -> None:
         """Initialize request error.
 
         :param message: Error message
@@ -205,7 +207,7 @@ class RequestError(BaseError):
 class ResponseValidationError(BaseError):
     """Exception raised for response validation errors."""
 
-    def __init__(self, message: str, cause: Optional[Exception] = None) -> None:
+    def __init__(self, message: str, cause: Exception | None = None) -> None:
         """Initialize response validation error.
 
         :param message: Error message
@@ -217,7 +219,7 @@ class ResponseValidationError(BaseError):
 class ModelResponseFormattingError(BaseError):
     """Exception raised for model response formatting errors."""
 
-    def __init__(self, message: str, cause: Optional[Exception] = None) -> None:
+    def __init__(self, message: str, cause: Exception | None = None) -> None:
         """Initialize model response formatting error.
 
         :param message: Error message
@@ -229,7 +231,7 @@ class ModelResponseFormattingError(BaseError):
 class RequestFileNotFoundError(BaseError):
     """Exception raised for HTTP 404 errors."""
 
-    def __init__(self, message: str, cause: Optional[Exception] = None) -> None:
+    def __init__(self, message: str, cause: Exception | None = None) -> None:
         """Initialize file not found error.
 
         :param message: Error message
@@ -243,10 +245,10 @@ class SrtLabelerPipeline:
 
     def __init__(
         self,
-        api_key: Optional[str] = None,
-        file_api_key: Optional[str] = None,
-        domain: Optional[str] = None,
-        max_workers: Optional[int] = None,
+        api_key: str | None = None,
+        file_api_key: str | None = None,
+        domain: str | None = None,
+        max_workers: int = DEFAULT_LWE_POOL_LIMIT,
         stats_db: str = DEFAULT_STATS_DB,
         debug: bool = False,
     ) -> None:
@@ -263,30 +265,30 @@ class SrtLabelerPipeline:
         if not api_key or not file_api_key or not domain:
             raise ValueError("API key, file API key, and domain must be provided")
 
-        self.log = Logger(self.__class__.__name__, debug=debug)
+        self.log: logging.Logger = Logger(self.__class__.__name__, debug=debug)
         self.log.debug(f"Initializing pipeline with domain: {domain}, debug: {debug}")
-        self.api_key = api_key
-        self.file_api_key = file_api_key
-        self.domain = domain
-        self.max_workers = max_workers or DEFAULT_LWE_POOL_LIMIT
-        self.debug = debug
+        self.api_key: str | None = api_key
+        self.file_api_key: str | None = file_api_key
+        self.domain: str | None = domain
+        self.max_workers: int = max_workers or DEFAULT_LWE_POOL_LIMIT
+        self.debug: bool = debug
         # Initialize stats database
-        self.stats_db_path = stats_db
-        self.stats = StatsDatabase(stats_db, debug=debug)
+        self.stats_db_path: str = stats_db
+        self.stats: StatsDatabase = StatsDatabase(stats_db, debug=debug)
         self.log.info("SRT Labeler pipeline initialized")
 
         # Initialize handlers
-        self.error_handler = TranscriptionErrorHandler()
-        self.payload_builder = ApiPayloadBuilder(api_key)
+        self.error_handler: TranscriptionErrorHandler = TranscriptionErrorHandler()
+        self.payload_builder: ApiPayloadBuilder = ApiPayloadBuilder(api_key)
 
         # Thread-local storage for LWE backends
-        self.thread_local = threading.local()
+        self.thread_local: threading.local = threading.local()
 
         # Initialize SrtMerger
-        self.merger = SrtMerger(debug=debug)
+        self.merger: SrtMerger = SrtMerger(debug=debug)
 
         # Initialize thread pool
-        self.executor = ThreadPoolExecutor(
+        self.executor: ThreadPoolExecutor = ThreadPoolExecutor(
             max_workers=self.max_workers,
             thread_name_prefix="LWEWorker",
             initializer=self._initialize_worker,
@@ -347,7 +349,7 @@ class SrtLabelerPipeline:
         """
         return str(uuid.uuid4())[:UUID_SHORT_LENGTH]
 
-    def _prepare_template_vars(self, transcription: Dict) -> Dict:
+    def _prepare_template_vars(self, transcription: dict[str, Any]) -> dict[str, Any]:
         """Prepare variables for template rendering.
 
         :param transcription: Transcription data
@@ -389,7 +391,7 @@ class SrtLabelerPipeline:
         wait=wait_exponential(multiplier=1, min=4, max=10),
         reraise=True,
     )
-    def _download_file(self, transcription: Dict) -> requests.Response | None:
+    def _download_file(self, transcription: dict[str, Any]) -> requests.Response | None:
         response = None
         try:
             url = transcription["url"]
@@ -405,14 +407,14 @@ class SrtLabelerPipeline:
             )
             self._check_download_errors_http(response, e)
 
-    def _try_download_file(self, transcription: Dict) -> bytes:
+    def _try_download_file(self, transcription: dict[str, Any]) -> bytes:
         response = self._download_file(transcription)
         self._check_download_errors_api(response)
         if response and response.content:
             return response.content
         raise RequestError("Received empty response")
 
-    def _add_audio_file(self, transcription: Dict) -> HumanMessage:
+    def _add_audio_file(self, transcription: dict[str, Any]) -> HumanMessage:
         audio_bytes = self._try_download_file(transcription)
         file = HumanMessage(
             content=[
@@ -421,13 +423,13 @@ class SrtLabelerPipeline:
         )
         return file
 
-    def _get_request_overrides(self, transcription: Dict, fallback: bool) -> Dict:
+    def _get_request_overrides(self, transcription: dict[str, Any], fallback: bool) -> dict[str, Any]:
         """Get override settings for backup preset.
 
         :param transcription_id: ID of transcription being processed
         :return: Override settings dictionary
         """
-        overrides: Dict[str, Dict[str, Union[List[HumanMessage], str]]] = {
+        overrides: dict[str, dict[str, list[HumanMessage] | str]] = {
             "request_overrides": {
                 "files": [self._add_audio_file(transcription)],
             },
@@ -441,8 +443,8 @@ class SrtLabelerPipeline:
         return overrides
 
     def _run_ai_analysis(
-        self, template_vars: Dict, overrides: Optional[Dict] = None
-    ) -> tuple[bool, Optional[str], Optional[str]]:
+        self, template_vars: dict[str, Any], overrides: dict[str, Any] | None = None
+    ) -> tuple[bool, str | None, str | None]:
         """Run AI analysis with template.
 
         :param template_vars: Variables for template
@@ -545,7 +547,7 @@ class SrtLabelerPipeline:
                 raise AuthenticationError(f"Authentication failed: {error_msg}")
             raise ResponseValidationError(f"Response validation failed: {error_msg}")
 
-    def _execute_update_request(self, url: str, payload: dict) -> requests.Response:
+    def _execute_update_request(self, url: str, payload: dict[str, Any]) -> requests.Response:
         """Execute the update request to the API.
 
         :param url: API endpoint URL
@@ -592,13 +594,13 @@ class SrtLabelerPipeline:
         else:
             self.stats.increment_primary()
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: type, exc_val: Exception, exc_tb: TracebackType) -> None:
         """Context manager exit."""
         del exc_type, exc_val, exc_tb
         self.cleanup()
 
     def _attempt_model_processing(
-        self, transcription: Dict, use_fallback: bool = False
+        self, transcription: dict[str, Any], use_fallback: bool = False
     ) -> TranscriptionResult:
         """Process with specific model.
 
@@ -620,7 +622,7 @@ class SrtLabelerPipeline:
             )
 
     def _execute_model_analysis(
-        self, transcription: Dict, use_fallback: bool
+        self, transcription: dict[str, Any], use_fallback: bool
     ) -> TranscriptionResult:
         """Execute the AI model analysis and process results.
 
@@ -642,8 +644,8 @@ class SrtLabelerPipeline:
         )
 
     def _run_model_with_template(
-        self, transcription: Dict, use_fallback: bool
-    ) -> tuple[bool, Optional[str], Optional[str]]:
+        self, transcription: dict[str, Any], use_fallback: bool
+    ) -> tuple[bool, str | None, str | None]:
         """Run the AI model with appropriate template and settings.
 
         :param transcription: Transcription data to process
@@ -658,7 +660,7 @@ class SrtLabelerPipeline:
         return result
 
     def _create_model_failure_result(
-        self, transcription_id: int, error: Optional[str]
+        self, transcription_id: int, error: str | None
     ) -> TranscriptionResult:
         """Create a failure result for model execution failure.
 
@@ -712,7 +714,7 @@ class SrtLabelerPipeline:
                 ai_content=ai_labeled_content,
             )
 
-    def _process_with_error_handling(self, transcription: Dict) -> TranscriptionResult:
+    def _process_with_error_handling(self, transcription: dict[str, Any]) -> TranscriptionResult:
         """Handle both primary and fallback attempts.
 
         :param transcription: Transcription data to process
