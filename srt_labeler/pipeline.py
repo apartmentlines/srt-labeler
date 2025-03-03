@@ -248,7 +248,7 @@ class SrtLabelerPipeline:
         api_key: str | None = None,
         file_api_key: str | None = None,
         domain: str | None = None,
-        max_workers: int = DEFAULT_LWE_POOL_LIMIT,
+        max_workers: int | None = None,
         stats_db: str = DEFAULT_STATS_DB,
         debug: bool = False,
     ) -> None:
@@ -275,7 +275,7 @@ class SrtLabelerPipeline:
         # Initialize stats database
         self.stats_db_path: str = stats_db
         self.stats: StatsDatabase = StatsDatabase(stats_db, debug=debug)
-        self.log.info("SRT Labeler pipeline initialized")
+        self.log.info(f"SRT Labeler pipeline initialized with max_workers: {self.max_workers}")
 
         # Initialize handlers
         self.error_handler: TranscriptionErrorHandler = TranscriptionErrorHandler()

@@ -34,6 +34,7 @@ class TestTranscriptionPipeline:
             debug=True,
             stats_db=custom_stats_db,
             continuous=60,
+            max_workers=4,
         )
         assert srt_labeler.api_key == "test_key"
         assert srt_labeler.file_api_key == "test_file_key"
@@ -42,6 +43,7 @@ class TestTranscriptionPipeline:
         assert srt_labeler.debug is True
         assert srt_labeler.stats_db == custom_stats_db
         assert srt_labeler.continuous == 60
+        assert srt_labeler.max_workers == 4
         assert srt_labeler.running is False
 
         # Test with defaults
@@ -55,6 +57,7 @@ class TestTranscriptionPipeline:
         assert srt_labeler.debug is False
         assert srt_labeler.stats_db == mock_default_stats_db
         assert srt_labeler.continuous is None
+        assert srt_labeler.max_workers is None
         assert srt_labeler.running is False
 
     @patch("srt_labeler.main.get_request")
@@ -260,6 +263,49 @@ class TestTranscriptionPipeline:
             assert args.max_id == 200
             assert args.file_api_key == "test_file_api_key"
 
+    def test_pipeline_initialization(self, tmp_path, mock_default_stats_db):
+        """Test that all parameters are correctly passed to the SrtLabelerPipeline."""
+        custom_stats_db = str(tmp_path / "custom.db")
+
+        # Test case 1: With custom parameters
+        with patch("srt_labeler.main.SrtLabelerPipeline") as mock_pipeline:
+            SrtLabeler(
+                api_key="test_key",
+                file_api_key="test_file_key",
+                domain="test_domain",
+                stats_db=custom_stats_db,
+                max_workers=4,
+                debug=True
+            )
+
+            # Verify all parameters are passed correctly
+            mock_pipeline.assert_called_once_with(
+                api_key="test_key",
+                file_api_key="test_file_key",
+                domain="test_domain",
+                max_workers=4,
+                stats_db=custom_stats_db,
+                debug=True
+            )
+
+        # Test case 2: With default parameters
+        with patch("srt_labeler.main.SrtLabelerPipeline") as mock_pipeline:
+            SrtLabeler(
+                api_key="test_key",
+                file_api_key="test_file_key",
+                domain="test_domain"
+            )
+
+            # Verify default parameters
+            mock_pipeline.assert_called_once_with(
+                api_key="test_key",
+                file_api_key="test_file_key",
+                domain="test_domain",
+                max_workers=None,
+                stats_db=mock_default_stats_db,
+                debug=False
+            )
+
 
 @patch("srt_labeler.main.load_configuration")
 def test_main_configuration_error(mock_load_config):
@@ -282,6 +328,8 @@ def test_parse_arguments(tmp_path):
         "--debug",
         "--stats-db",
         custom_stats_db,
+        "--max-workers",
+        "4",
     ]
     with patch("sys.argv", ["main.py"] + test_args):
         args = parse_arguments()
@@ -290,6 +338,7 @@ def test_parse_arguments(tmp_path):
         assert args.domain == "test_domain"
         assert args.debug is True
         assert args.stats_db == custom_stats_db
+        assert args.max_workers == 4
 
 def test_parse_arguments_with_continuous():
     test_args = [

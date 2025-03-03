@@ -30,6 +30,7 @@ class SrtLabeler:
         max_id: int | None = None,
         continuous: int | None = None,
         stats_db: str | None = None,
+        max_workers: int | None = None,
         debug: bool = False,
     ) -> None:
         self.log: logging.Logger = Logger(self.__class__.__name__, debug=debug)
@@ -41,6 +42,7 @@ class SrtLabeler:
         self.max_id: int | None = max_id
         self.continuous: int | None = continuous
         self.stats_db: str = stats_db if stats_db is not None else DEFAULT_STATS_DB
+        self.max_workers: int | None = max_workers
         self.debug: bool = debug
         self.running: bool = False
         self.pipeline: SrtLabelerPipeline = self._initialize_pipeline()
@@ -50,6 +52,7 @@ class SrtLabeler:
             api_key=self.api_key,
             file_api_key=self.file_api_key,
             domain=self.domain,
+            max_workers=self.max_workers,
             stats_db=self.stats_db,
             debug=self.debug,
         )
@@ -177,7 +180,12 @@ def parse_arguments() -> argparse.Namespace:
         "--stats-db",
         type=str,
         default=DEFAULT_STATS_DB,
-        help=f"Path to SQLite stats database (default: %(default)s)",
+        help="Path to SQLite stats database (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--max-workers",
+        type=positive_int,
+        help="Maximum number of worker threads for processing transcriptions",
     )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     return parser.parse_args()
@@ -201,6 +209,7 @@ def main() -> None:
         max_id=args.max_id,
         continuous=args.continuous,
         stats_db=args.stats_db,
+        max_workers=args.max_workers,
         debug=args.debug,
     )
     labeler.run()
