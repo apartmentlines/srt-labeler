@@ -20,10 +20,11 @@ dependencies = [
     "requests",
     "tenacity",
     "srt",
-    "llm-workflow-engine @ git+https://github.com/llm-workflow-engine/llm-workflow-engine.git@c099ade21ec4b8763ab1213d3370d9cd6e93e05c",
-    "lwe-plugin-provider-chat-fireworks @ git+https://github.com/llm-workflow-engine/lwe-plugin-provider-chat-fireworks.git@97b529826d58177cf25d3f33fa5bda5d03d62a71",
-    "lwe-plugin-provider-chat-google-genai @ git+https://github.com/llm-workflow-engine/lwe-plugin-provider-chat-google-genai.git@087e9a30ca8f5fa5719cbbcf97ced848b9f77ec6",
-    "lwe-plugin-provider-openrouter @ git+https://github.com/llm-workflow-engine/lwe-plugin-provider-openrouter.git@932dc19c1e1d3805d48e005ff24fe50747805073",
+    "llm-workflow-engine",
+    # Disabled, protobuf conflict with langchain-google-genai
+    # "lwe-plugin-provider-chat-fireworks @ git+https://github.com/llm-workflow-engine/lwe-plugin-provider-chat-fireworks.git@7e5322b146e09cbaf857f164ceae875d46f7a949",
+    "lwe-plugin-provider-chat-google-genai @ git+https://github.com/llm-workflow-engine/lwe-plugin-provider-chat-google-genai.git@ca94f030e500e713aa517aaef06aa8afaeb84f48",
+    "lwe-plugin-provider-openrouter @ git+https://github.com/llm-workflow-engine/lwe-plugin-provider-openrouter.git@5af2f463b426fd9b7e3bb11d3a04622125d85b92",
 ]
 
 [tool.setuptools.packages.find]

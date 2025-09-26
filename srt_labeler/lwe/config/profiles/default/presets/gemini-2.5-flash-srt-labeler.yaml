@@ -1,9 +1,9 @@
 metadata:
-  name: gemini-1.5-pro-srt-labeler
+  name: gemini-2.5-flash-srt-labeler
   provider: chat_google_genai
 model_customizations:
   max_output_tokens: 16000
-  model: models/gemini-1.5-pro-latest
+  model: models/gemini-2.5-flash
   n: 1
   safety_settings:
     HARM_CATEGORY_DANGEROUS_CONTENT: BLOCK_NONE
@@ -11,4 +11,5 @@ model_customizations:
     HARM_CATEGORY_HATE_SPEECH: BLOCK_NONE
     HARM_CATEGORY_SEXUALLY_EXPLICIT: BLOCK_NONE
   temperature: 0.0
+  thinking_budget: 0
   top_k: null
