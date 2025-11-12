@@ -13,7 +13,7 @@ from typing import Any
 from types import TracebackType
 from dataclasses import dataclass
 from tenacity import retry, stop_after_attempt, wait_exponential
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, AIMessage
 import requests
 from .utils import post_request
 from lwe.core.config import Config
@@ -177,7 +177,7 @@ class BaseError(Exception):
         """
         super().__init__(message)
         if cause:
-            self.__cause__ = cause
+            self.__cause__: BaseException | None = cause
 
 
 class AuthenticationError(BaseError):
@@ -452,13 +452,17 @@ class SrtLabelerPipeline:
         :return: Tuple of (success, response, error)
         """
         self.log.debug("Running AI analysis with template")
-        result = self.thread_local.backend.run_template(
+        success, response, _user_message = self.thread_local.backend.run_template(
             LWE_TRANSCRIPTION_TEMPLATE,
             template_vars=template_vars,
             overrides=overrides,
         )
-        self.log.debug(f"AI analysis completed with success: {result[0]}")
-        return result
+        self.log.debug(f"AI analysis completed with success: {success}")
+        # NOTE: This is a workaround for the fact that under certain circumstances,
+        # the LWE backend returns an AIMessage object instead of a string.
+        if type(response) is AIMessage:
+            response = str(response.content)
+        return success, response, _user_message
 
     def _merge_srt_content(self, original_srt: str, ai_labeled_srt: str) -> str:
         """Merge original SRT with AI-labeled content.
