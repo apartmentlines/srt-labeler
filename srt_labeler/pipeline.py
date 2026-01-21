@@ -442,6 +442,27 @@ class SrtLabelerPipeline:
             self.log.debug(f"Applied backup override: {LWE_FALLBACK_PRESET}")
         return overrides
 
+    def _normalize_model_response(self, content: Any) -> str:
+        if content is None:
+            return ""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            out = []
+            for part in content:
+                if isinstance(part, str):
+                    out.append(part)
+                elif isinstance(part, dict):
+                    if "text" in part and isinstance(part["text"], str):
+                        out.append(part["text"])
+                    else:
+                        pass
+                else:
+                    pass
+            return "\n".join(out).strip()
+        # unknown scalar (e.g., pydantic model, tool result wrapper)
+        return str(content).strip()
+
     def _run_ai_analysis(
         self, template_vars: dict[str, Any], overrides: dict[str, Any] | None = None
     ) -> tuple[bool, str | None, str | None]:
@@ -460,8 +481,9 @@ class SrtLabelerPipeline:
         self.log.debug(f"AI analysis completed with success: {success}")
         # NOTE: This is a workaround for the fact that under certain circumstances,
         # the LWE backend returns an AIMessage object instead of a string.
-        if type(response) is AIMessage:
+        if type(response) is AIMessage:  # pyright: ignore[reportUnnecessaryComparison]
             response = str(response.content)
+        response: str = self._normalize_model_response(response)
         return success, response, _user_message
 
     def _merge_srt_content(self, original_srt: str, ai_labeled_srt: str) -> str:
