@@ -1,3 +1,7 @@
+"""Apply speaker labels using LWE presets and provider-specific audio URLs."""
+
+from __future__ import annotations
+
 import os
 import re
 import tempfile
@@ -19,6 +23,7 @@ from .utils import post_request
 from lwe.core.config import Config
 from lwe import ApiBackend
 from .logger import Logger
+from .audio import AudioAttachmentFactory
 from .merger import SrtMerger, SrtMergeError
 from .constants import (
     LWE_DEFAULT_PRESET,
@@ -75,16 +80,17 @@ class FallbackResultValidator:
         """
         self.merger: SrtMerger = merger
 
-    def should_accept_fallback(self, error: Exception | None, ai_content: str | None) -> bool:
+    def should_accept_fallback(
+        self, error: Exception | None, ai_content: str | None
+    ) -> bool:
         """Determine if fallback model output should be accepted.
 
         :param error: The error from merge attempt
         :param ai_content: Raw AI-generated SRT content
         :return: True if fallback content should be accepted
         """
-        return (
-            isinstance(error, SrtMergeError)
-            and self.merger.validate_srt_labels(ai_content)
+        return isinstance(error, SrtMergeError) and self.merger.validate_srt_labels(
+            ai_content
         )
 
 
@@ -275,7 +281,9 @@ class SrtLabelerPipeline:
         # Initialize stats database
         self.stats_db_path: str = stats_db
         self.stats: StatsDatabase = StatsDatabase(stats_db, debug=debug)
-        self.log.info(f"SRT Labeler pipeline initialized with max_workers: {self.max_workers}")
+        self.log.info(
+            f"SRT Labeler pipeline initialized with max_workers: {self.max_workers}"
+        )
 
         # Initialize handlers
         self.error_handler: TranscriptionErrorHandler = TranscriptionErrorHandler()
@@ -283,6 +291,7 @@ class SrtLabelerPipeline:
 
         # Thread-local storage for LWE backends
         self.thread_local: threading.local = threading.local()
+        self.audio_attachments = AudioAttachmentFactory()
 
         # Initialize SrtMerger
         self.merger: SrtMerger = SrtMerger(debug=debug)
@@ -313,7 +322,10 @@ class SrtLabelerPipeline:
         config.set("model.default_preset", LWE_DEFAULT_PRESET)
         if self.debug:
             config.set("debug.log.enabled", True)
-            config.set("debug.log.filepath", "%s/%s" % (tempfile.gettempdir(), "lwe-srt-labeler-debug.log"))
+            config.set(
+                "debug.log.filepath",
+                "%s/%s" % (tempfile.gettempdir(), "lwe-srt-labeler-debug.log"),
+            )
 
         backend = ApiBackend(config)
         self.log.debug("LWE backend initialization complete")
@@ -414,32 +426,61 @@ class SrtLabelerPipeline:
             return response.content
         raise RequestError("Received empty response")
 
-    def _add_audio_file(self, transcription: dict[str, Any]) -> HumanMessage:
-        audio_bytes = self._try_download_file(transcription)
-        file = HumanMessage(
-            content=[
-                {"type": "media", "mime_type": "audio/wav", "data": audio_bytes},
-            ]
+    def _add_audio_file(
+        self,
+        transcription: dict[str, Any],
+        preset_name: str = LWE_DEFAULT_PRESET,
+    ) -> HumanMessage:
+        """Format a signed URL for the provider selected by this attempt's preset.
+
+        :param transcription: Transcription including its signed recording URL.
+        :param preset_name: Primary or fallback preset used for this request.
+        :return: Provider-specific audio attachment.
+        :raises RequestError: If the preset or audio attachment is invalid.
+        """
+        success, preset, message = (
+            self.thread_local.backend.preset_manager.ensure_preset(preset_name)
         )
-        return file
+        if not success:
+            raise RequestError(f"Cannot load audio preset {preset_name!r}: {message}")
+        metadata, _customizations = preset
+        provider = metadata.get("provider")
+        if not isinstance(provider, str) or not provider:
+            raise RequestError(f"Preset {preset_name!r} has no provider")
+        provider = self.thread_local.backend.provider_manager.full_name(provider)
+        self.log.debug(
+            "Formatting audio for transcription %s using preset %s, provider %s",
+            transcription["id"],
+            preset_name,
+            provider,
+        )
+        try:
+            return self.audio_attachments.create(
+                provider, transcription.get("signed_url", "")
+            )
+        except ValueError as error:
+            raise RequestError(str(error), cause=error) from error
 
-    def _get_request_overrides(self, transcription: dict[str, Any], fallback: bool) -> dict[str, Any]:
-        """Get override settings for backup preset.
+    def _get_request_overrides(
+        self, transcription: dict[str, Any], fallback: bool
+    ) -> dict[str, Any]:
+        """Select a preset and build its matching audio attachment.
 
-        :param transcription_id: ID of transcription being processed
+        :param transcription: Transcription including its signed recording URL.
+        :param fallback: Whether to select the fallback preset.
         :return: Override settings dictionary
         """
-        overrides: dict[str, dict[str, list[HumanMessage] | str]] = {
+        preset_name = LWE_FALLBACK_PRESET if fallback else LWE_DEFAULT_PRESET
+        overrides: dict[str, Any] = {
             "request_overrides": {
-                "files": [self._add_audio_file(transcription)],
+                "preset": preset_name,
+                "files": [self._add_audio_file(transcription, preset_name)],
             },
         }
         if fallback:
             self.log.warning(
                 f"Using backup preset for transcription {transcription['id']} after failure"
             )
-            overrides["request_overrides"]["preset"] = LWE_FALLBACK_PRESET
-            self.log.debug(f"Applied backup override: {LWE_FALLBACK_PRESET}")
         return overrides
 
     def _normalize_model_response(self, content: Any) -> str:
@@ -511,7 +552,9 @@ class SrtLabelerPipeline:
         if result.requires_api_update:
             self.update_transcription(result)
 
-    def process_transcriptions(self, transcriptions: list[dict[str, Any]] | None) -> None:
+    def process_transcriptions(
+        self, transcriptions: list[dict[str, Any]] | None
+    ) -> None:
         """Process transcriptions using thread pool.
 
         :param transcriptions: List of transcriptions to process
@@ -573,7 +616,9 @@ class SrtLabelerPipeline:
                 raise AuthenticationError(f"Authentication failed: {error_msg}")
             raise ResponseValidationError(f"Response validation failed: {error_msg}")
 
-    def _execute_update_request(self, url: str, payload: dict[str, Any]) -> requests.Response:
+    def _execute_update_request(
+        self, url: str, payload: dict[str, Any]
+    ) -> requests.Response:
         """Execute the update request to the API.
 
         :param url: API endpoint URL
@@ -620,7 +665,9 @@ class SrtLabelerPipeline:
         else:
             self.stats.increment_primary()
 
-    def __exit__(self, exc_type: type, exc_val: Exception, exc_tb: TracebackType) -> None:
+    def __exit__(
+        self, exc_type: type, exc_val: Exception, exc_tb: TracebackType
+    ) -> None:
         """Context manager exit."""
         del exc_type, exc_val, exc_tb
         self.cleanup()
@@ -643,6 +690,12 @@ class SrtLabelerPipeline:
             self._increment_stats(use_fallback)
             return result
         except Exception as e:
+            self.log.warning(
+                "Model attempt failed for transcription %s (fallback=%s): %s",
+                transcription["id"],
+                use_fallback,
+                e,
+            )
             return TranscriptionResult(
                 transcription_id=transcription["id"], success=False, error=e
             )
@@ -740,7 +793,9 @@ class SrtLabelerPipeline:
                 ai_content=ai_labeled_content,
             )
 
-    def _process_with_error_handling(self, transcription: dict[str, Any]) -> TranscriptionResult:
+    def _process_with_error_handling(
+        self, transcription: dict[str, Any]
+    ) -> TranscriptionResult:
         """Handle both primary and fallback attempts.
 
         :param transcription: Transcription data to process
@@ -781,10 +836,14 @@ class SrtLabelerPipeline:
         """
         self.log.debug("Both attempts failed, determining final result")
 
-        if self.error_handler.should_update_with_error(primary_result.error, fallback_result.error):
+        if self.error_handler.should_update_with_error(
+            primary_result.error, fallback_result.error
+        ):
             return self._handle_hard_error_case(transcription_id, fallback_result)
 
-        return self._handle_transient_error_case(transcription_id, primary_result, fallback_result)
+        return self._handle_transient_error_case(
+            transcription_id, primary_result, fallback_result
+        )
 
     def _handle_hard_error_case(
         self,
@@ -800,12 +859,14 @@ class SrtLabelerPipeline:
         self.log.warning("Both labeling errors hard, checking fallback content")
         validator = FallbackResultValidator(self.merger)
 
-        if validator.should_accept_fallback(fallback_result.error, fallback_result.ai_content):
+        if validator.should_accept_fallback(
+            fallback_result.error, fallback_result.ai_content
+        ):
             self.log.info("Fallback content validated, using raw AI output")
             return TranscriptionResult(
                 transcription_id=transcription_id,
                 success=True,
-                transcription=fallback_result.ai_content
+                transcription=fallback_result.ai_content,
             )
 
         self.log.warning("Both labeling errors hard, sending error state to API")

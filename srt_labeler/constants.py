@@ -13,7 +13,7 @@ TRANSCRIPTION_STATE_ACTIVE = "active"
 TRANSCRIPTION_STATE_COMPLETE = "complete"
 
 # LWE constants
-LWE_DEFAULT_PRESET = "gemini-2.5-flash-srt-labeler"
+LWE_DEFAULT_PRESET = "qwen3.8-omni-flash-srt-labeler"
 LWE_FALLBACK_PRESET = "gemini-2.5-pro-srt-labeler"
 LWE_TRANSCRIPTION_TEMPLATE = "transcription-srt-labeling-with-audio.md"
 

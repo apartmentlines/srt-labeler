@@ -14,7 +14,7 @@ A Python tool for automatically applying speaker labels to SRT subtitle files us
 
 ## Installation
 
-Requires Python 3.9 or higher.
+Requires Python 3.10 or higher.
 
 ```bash
 pip install git+https://github.com/apartmentlines/srt-labeler.git
@@ -27,7 +27,8 @@ pip install git+https://github.com/apartmentlines/srt-labeler.git
 The following environment variables are required:
 
 - `SRT_LABELER_API_KEY`: API key for authentication
-- `SRT_LABELER_FILE_API_KEY`: API key for file downloads
+- `SRT_LABELER_FILE_API_KEY`: Existing file API key configuration (retained for
+  compatibility; model audio requests use signed URLs)
 - `SRT_LABELER_DOMAIN`: Domain for API endpoints
 
 These can also be provided via command-line arguments.
@@ -36,8 +37,8 @@ These can also be provided via command-line arguments.
 
 The tool uses [LWE](https://github.com/llm-workflow-engine/llm-workflow-engine) (LLM Workflow Engine) with the following preset models:
 
-- gemini-1.5-flash-srt-labeler (primary)
-- gemini-1.5-pro-srt-labeler (fallback)
+- qwen3.8-omni-flash-srt-labeler (primary, `chat_openai_compat`)
+- gemini-2.5-pro-srt-labeler (fallback, `chat_google_genai`)
 
 And the following prompt templates:
 
@@ -146,7 +147,8 @@ Response:
         {
             "id": 123,
             "transcription": "SRT content...",
-            "url": "https://example.com/audio/123.wav"
+            "url": "https://example.com/audio/123.wav",
+            "signed_url": "https://example.com/audio/123.wav?transcription_id=123&api_key=SIGNATURE"
         }
     ]
 }
@@ -160,6 +162,8 @@ Parameters:
 - api_key (required): File API key for authentication
 
 Returns the audio file content directly.
+
+Alternatively, request `signed_url` verbatim.
 
 ### Update Transcription
 ```

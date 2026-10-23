@@ -149,6 +149,7 @@ caller: Hi there"""
 
     assert merger.validate_srt_labels(content) is True
 
+
 def test_validate_srt_labels_invalid_labels():
     """Test validation of SRT content with invalid labels."""
     merger = SrtMerger()
@@ -158,17 +159,20 @@ invalid: Hello world"""
 
     assert merger.validate_srt_labels(content) is False
 
+
 def test_validate_srt_labels_empty_content():
     """Test validation with empty content."""
     merger = SrtMerger()
     assert merger.validate_srt_labels("") is False
     assert merger.validate_srt_labels(None) is False
 
+
 def test_validate_srt_labels_invalid_format():
     """Test validation with malformed SRT content."""
     merger = SrtMerger()
     content = "not a valid srt format"
     assert merger.validate_srt_labels(content) is False
+
 
 def test_timing_preservation():
     """Test timing information is preserved throughout the pipeline."""

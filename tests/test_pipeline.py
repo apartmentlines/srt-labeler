@@ -1,3 +1,7 @@
+"""Exercise labeling, provider-specific attachments, and error handling."""
+
+from __future__ import annotations
+
 import os
 import pytest
 import requests
@@ -6,6 +10,7 @@ from unittest.mock import Mock, patch, ANY
 from concurrent.futures import ThreadPoolExecutor
 from langchain_core.messages import HumanMessage
 from lwe.core.config import Config
+from lwe.core.provider_manager import ProviderManager
 from lwe import ApiBackend
 from srt_labeler.pipeline import (
     SrtLabelerPipeline,
@@ -27,6 +32,7 @@ from srt_labeler.constants import (
     DEFAULT_LWE_POOL_LIMIT,
     UUID_SHORT_LENGTH,
     LWE_FALLBACK_PRESET,
+    LWE_DEFAULT_PRESET,
     LWE_TRANSCRIPTION_TEMPLATE,
     DOWNLOAD_TIMEOUT,
 )
@@ -35,6 +41,25 @@ from srt_labeler.constants import (
 @pytest.fixture
 def mock_lwe_backend():
     mock_backend = Mock(spec=ApiBackend)
+    mock_backend.provider_manager = Mock(spec=ProviderManager)
+    mock_backend.provider_manager.full_name.side_effect = lambda name: (
+        ProviderManager.full_name(mock_backend.provider_manager, name)
+    )
+    mock_backend.preset_manager = Mock()
+    mock_backend.preset_manager.ensure_preset.side_effect = lambda name: (
+        True,
+        (
+            {
+                "provider": (
+                    "chat_google_genai"
+                    if name == LWE_FALLBACK_PRESET
+                    else "chat_openai_compat"
+                )
+            },
+            {},
+        ),
+        "Preset found",
+    )
     # Configure run_template to return a tuple (success, response, error)
     mock_backend.run_template.return_value = (True, "test response", None)
     return mock_backend
@@ -73,6 +98,7 @@ class TestSrtLabelerPipeline:
             "id": 123,
             "transcription": "1\n00:00:01,000 --> 00:00:02,000\nHello world",
             "url": "https://test.com/audio.wav",
+            "signed_url": "https://test.com/audio.wav?transcription_id=123&api_key=signature",
             "metadata": {"call_uuid": "4125551212"},
         }
 
@@ -507,24 +533,23 @@ class TestSrtLabelerPipeline:
         assert "Network Error" in str(exc_info.value)
         assert mock_network["get"].call_count == DEFAULT_RETRY_ATTEMPTS
 
-    def test_add_audio_file(self, pipeline_args, audio_transcription):
-        """Test that _add_audio_file creates a HumanMessage with the audio data."""
+    def test_add_audio_file(self, pipeline_args, audio_transcription, mock_lwe_setup):
+        """Build an audio attachment containing the supplied signed URL."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
-        mock_audio_data = b"Audio data"
+        pipeline._initialize_worker()
 
-        with patch.object(
-            pipeline, "_try_download_file", return_value=mock_audio_data
-        ) as mock_download:
-            result = pipeline._add_audio_file(transcription=audio_transcription)
-            mock_download.assert_called_once_with(audio_transcription)
+        result = pipeline._add_audio_file(transcription=audio_transcription)
 
-            assert isinstance(result, HumanMessage)
-            assert len(result.content) == 1
-            media_content = result.content[0]
-            assert isinstance(media_content, dict)
-            assert media_content.get("type") == "media"
-            assert media_content.get("mime_type") == "audio/wav"
-            assert media_content.get("data") == mock_audio_data
+        assert isinstance(result, HumanMessage)
+        assert result.content == [
+            {
+                "type": "input_audio",
+                "input_audio": {
+                    "data": audio_transcription["signed_url"],
+                    "format": "wav",
+                },
+            }
+        ]
 
     @pytest.mark.usefixtures("mock_lwe_setup")
     def test_thread_pool_cleanup(self, pipeline_args):
@@ -599,13 +624,10 @@ class TestSrtLabelerPipeline:
         pipeline_args,
         audio_transcription,
         mock_lwe_setup,
-        mock_audio_response,
-        mock_network,
     ):
         """Test processing a single transcription with AI model."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         pipeline._initialize_worker()
-        mock_network["get"].return_value = mock_audio_response
 
         # Mock the LWE backend response
         mock_response = """
@@ -635,20 +657,10 @@ Operator: Hello world
                 result.transcription and "Operator: Hello world" in result.transcription
             )
 
-            # Verify audio file was downloaded
-            mock_network["get"].assert_called_once_with(
-                audio_transcription["url"],
-                params={"api_key": pipeline.file_api_key},
-                timeout=DOWNLOAD_TIMEOUT,
-            )
-
-    def test_process_transcription_backup_preset(
-        self, pipeline_args, mock_lwe_setup, mock_audio_response, mock_network
-    ):
+    def test_process_transcription_backup_preset(self, pipeline_args, mock_lwe_setup):
         """Test fallback to backup preset after failures."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         pipeline._initialize_worker()
-        mock_network["get"].return_value = mock_audio_response
 
         # Mock responses for first and second attempts
         mock_lwe_setup["backend"].run_template.side_effect = [
@@ -670,6 +682,7 @@ Operator: Hello world
             "id": 1,
             "transcription": "1\n00:00:01,000 --> 00:00:02,000\nHello world\n",
             "url": "https://test.com/audio.wav",
+            "signed_url": "https://test.com/audio.wav?transcription_id=1&api_key=signature",
         }
 
         with patch.object(pipeline, "update_transcription") as mock_update:
@@ -703,12 +716,13 @@ Operator: Hello world
                 result.transcription and "Operator: Hello world" in result.transcription
             )
 
-            # Verify audio file downloads were attempted for both tries
-            assert mock_network["get"].call_count == 2
-            assert all(
-                call[0][0] == transcription["url"]
-                for call in mock_network["get"].call_args_list
-            )
+            first_overrides = first_call_args[1]["overrides"]["request_overrides"]
+            assert first_overrides["files"][0].content[0]["type"] == "input_audio"
+            assert overrides["files"][0].content[0] == {
+                "type": "media",
+                "mime_type": "audio/wav",
+                "file_uri": transcription["signed_url"],
+            }
 
     def test_extract_transcript_section(self, pipeline_args):
         """Test extraction of transcript section from AI response."""
@@ -774,34 +788,28 @@ Operator: Hello"""
         assert id1 != id2  # Verify uniqueness
 
     def test_get_request_overrides_basic(
-        self, pipeline_args, audio_transcription, mock_audio_response, mock_network
+        self, pipeline_args, audio_transcription, mock_lwe_setup
     ):
         """Test basic request overrides without fallback."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
-        mock_network["get"].return_value = mock_audio_response
+        pipeline._initialize_worker()
 
         overrides = pipeline._get_request_overrides(audio_transcription, fallback=False)
 
         assert "request_overrides" in overrides
         assert "files" in overrides["request_overrides"]
-        assert "preset" not in overrides["request_overrides"]
-        mock_network["get"].assert_called_once_with(
-            audio_transcription["url"],
-            params={"api_key": pipeline.file_api_key},
-            timeout=DOWNLOAD_TIMEOUT,
-        )
+        assert overrides["request_overrides"]["preset"] == LWE_DEFAULT_PRESET
 
     def test_get_request_overrides_with_fallback(
         self,
         pipeline_args,
         audio_transcription,
-        mock_audio_response,
-        mock_network,
+        mock_lwe_setup,
         capsys,
     ):
         """Test request overrides with fallback preset."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
-        mock_network["get"].return_value = mock_audio_response
+        pipeline._initialize_worker()
 
         overrides = pipeline._get_request_overrides(audio_transcription, fallback=True)
 
@@ -815,52 +823,94 @@ Operator: Hello"""
         )
 
     def test_get_request_overrides_audio_file(
-        self, pipeline_args, audio_transcription, mock_audio_response, mock_network
+        self, pipeline_args, audio_transcription, mock_lwe_setup
     ):
         """Test audio file handling in request overrides."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
-        mock_network["get"].return_value = mock_audio_response
-        mock_audio_response.content = b"test_audio_data"
-        mock_audio_response.headers = {"content-type": "audio/wav"}
+        pipeline._initialize_worker()
 
         overrides = pipeline._get_request_overrides(audio_transcription, fallback=False)
 
         files = overrides["request_overrides"]["files"]
         assert len(files) == 1
         assert isinstance(files[0], HumanMessage)
-        assert files[0].content[0]["type"] == "media"
-        assert files[0].content[0]["mime_type"] == "audio/wav"
-        assert files[0].content[0]["data"] == b"test_audio_data"
+        assert files[0].content[0] == {
+            "type": "input_audio",
+            "input_audio": {"data": audio_transcription["signed_url"], "format": "wav"},
+        }
 
-    def test_get_request_overrides_download_error(
-        self, pipeline_args, audio_transcription, mock_error_response, mock_network
+    def test_get_request_overrides_missing_signed_url(
+        self, pipeline_args, audio_transcription, mock_lwe_setup
     ):
-        """Test error handling during file download in request overrides."""
+        """Reject transcription records that do not include a signed URL."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
-        mock_network["get"].return_value = mock_error_response
-        mock_error_response.status_code = 404
+        pipeline._initialize_worker()
+        audio_transcription.pop("signed_url")
 
-        with pytest.raises(RequestError) as exc_info:
+        with pytest.raises(RequestError, match="missing a signed_url"):
             pipeline._get_request_overrides(audio_transcription, fallback=False)
 
-        assert "Error downloading audio file: {'error': 'Not found'}" in str(
-            exc_info.value
+    @pytest.mark.parametrize("fallback", [False, True])
+    def test_audio_format_uses_selected_preset_provider_metadata(
+        self, pipeline_args, audio_transcription, mock_lwe_setup, fallback
+    ):
+        """Both attempts use preset metadata rather than the backend's provider."""
+        pipeline = SrtLabelerPipeline(**pipeline_args)
+        pipeline._initialize_worker()
+        manager = mock_lwe_setup["backend"].preset_manager
+        manager.ensure_preset.side_effect = None
+        manager.ensure_preset.return_value = (
+            True,
+            ({"provider": "chat_google_genai"}, {}),
+            "Found",
         )
+        mock_lwe_setup["backend"].provider = Mock(name="active_provider")
+        mock_lwe_setup["backend"].provider.name = "provider_chat_openai_compat"
+        overrides = pipeline._get_request_overrides(audio_transcription, fallback)
+        preset_name = LWE_FALLBACK_PRESET if fallback else LWE_DEFAULT_PRESET
+        manager.ensure_preset.assert_called_once_with(preset_name)
+        assert overrides["request_overrides"]["files"][0].content == [
+            {
+                "type": "media",
+                "file_uri": audio_transcription["signed_url"],
+                "mime_type": "audio/wav",
+            }
+        ]
+
+    def test_audio_preset_lookup_failure(
+        self, pipeline_args, audio_transcription, mock_lwe_setup
+    ):
+        """Missing presets fail before a model request is submitted."""
+        pipeline = SrtLabelerPipeline(**pipeline_args)
+        pipeline._initialize_worker()
+        manager = mock_lwe_setup["backend"].preset_manager
+        manager.ensure_preset.side_effect = None
+        manager.ensure_preset.return_value = (False, None, "Preset not found")
+        with pytest.raises(RequestError, match="Cannot load audio preset"):
+            pipeline._get_request_overrides(audio_transcription, False)
+        mock_lwe_setup["backend"].run_template.assert_not_called()
+
+    def test_missing_signed_url_is_not_a_permanent_transcription_failure(
+        self, pipeline_args, audio_transcription, mock_lwe_setup
+    ):
+        """A server rollout mismatch must leave the transcription retryable."""
+        pipeline = SrtLabelerPipeline(**pipeline_args)
+        pipeline._initialize_worker()
+        audio_transcription.pop("signed_url")
+        result = pipeline._process_with_error_handling(audio_transcription)
+        assert not result.success
+        assert not result.requires_api_update
+        mock_lwe_setup["backend"].run_template.assert_not_called()
 
     def test_run_ai_analysis_no_overrides(
         self,
         pipeline_args,
         mock_lwe_setup,
-        mock_audio_response,
-        mock_network,
         audio_transcription,
     ):
         """Test AI analysis without overrides."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         pipeline._initialize_worker()
-        mock_network["get"].return_value = mock_audio_response
-        mock_audio_response.content = b"test_audio_data"
-        mock_audio_response.headers = {"content-type": "audio/wav"}
 
         mock_lwe_setup["backend"].run_template.return_value = (True, "response", None)
         overrides = pipeline._get_request_overrides(audio_transcription, fallback=False)
@@ -884,16 +934,11 @@ Operator: Hello"""
         self,
         pipeline_args,
         mock_lwe_setup,
-        mock_audio_response,
-        mock_network,
         audio_transcription,
     ):
         """Test AI analysis with overrides."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         pipeline._initialize_worker()
-        mock_network["get"].return_value = mock_audio_response
-        mock_audio_response.content = b"test_audio_data"
-        mock_audio_response.headers = {"content-type": "audio/wav"}
 
         mock_lwe_setup["backend"].run_template.return_value = (True, "response", None)
         overrides = pipeline._get_request_overrides(audio_transcription, fallback=True)
@@ -1254,16 +1299,11 @@ invalid: Hello world"""
         self,
         pipeline_args,
         mock_lwe_setup,
-        mock_audio_response,
-        mock_network,
         audio_transcription,
     ):
         """Test successful model analysis execution."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         pipeline._initialize_worker()
-        mock_network["get"].return_value = mock_audio_response
-        mock_audio_response.content = b"test_audio_data"
-        mock_audio_response.headers = {"content-type": "audio/wav"}
 
         # Mock successful response
         mock_lwe_setup["backend"].run_template.return_value = (
@@ -1279,13 +1319,6 @@ Operator: Hello world
         )
 
         result = pipeline._execute_model_analysis(audio_transcription, False)
-
-        # Verify audio file handling
-        mock_network["get"].assert_called_once_with(
-            audio_transcription["url"],
-            params={"api_key": pipeline.file_api_key},
-            timeout=DOWNLOAD_TIMEOUT,
-        )
 
         # Verify template call included audio file
         template_call = mock_lwe_setup["backend"].run_template.call_args
@@ -1303,16 +1336,11 @@ Operator: Hello world
         self,
         pipeline_args,
         mock_lwe_setup,
-        mock_audio_response,
-        mock_network,
         audio_transcription,
     ):
         """Test model analysis execution failure."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         pipeline._initialize_worker()
-        mock_network["get"].return_value = mock_audio_response
-        mock_audio_response.content = b"test_audio_data"
-        mock_audio_response.headers = {"content-type": "audio/wav"}
 
         # Mock failed response
         mock_lwe_setup["backend"].run_template.return_value = (
@@ -1322,13 +1350,6 @@ Operator: Hello world
         )
 
         result = pipeline._execute_model_analysis(audio_transcription, False)
-
-        # Verify audio file handling
-        mock_network["get"].assert_called_once_with(
-            audio_transcription["url"],
-            params={"api_key": pipeline.file_api_key},
-            timeout=DOWNLOAD_TIMEOUT,
-        )
 
         # Verify template call included audio file
         template_call = mock_lwe_setup["backend"].run_template.call_args
@@ -1403,7 +1424,7 @@ Operator: Hello world
             "No transcript section found in the text",
             "test content",
             "invalid response",
-            False
+            False,
         )
 
     def test_process_model_response_merge_error(self, pipeline_args):
@@ -1427,11 +1448,7 @@ invalid
         assert "Invalid SRT format" in str(result.error)
 
         mock_stats.log_model_response_error.assert_called_once_with(
-            123,
-            str(result.error),
-            "test content",
-            model_response,
-            True
+            123, str(result.error), "test content", model_response, True
         )
 
     @pytest.mark.usefixtures("mock_lwe_setup")
@@ -1515,56 +1532,37 @@ invalid
         pipeline = SrtLabelerPipeline(**pipeline_args)
         pipeline._initialize_worker()
 
-        # Mock the response object
-        mock_response = Mock(spec=requests.Response)
-        mock_response.content = b"test_audio_data"
-        mock_response.headers = {"content-type": "audio/wav"}
-        mock_response.status_code = 200
+        pipeline._run_model_with_template(
+            transcription=audio_transcription, use_fallback=False
+        )
+        template_call = mock_lwe_setup["backend"].run_template.call_args
+        assert template_call[0][0] == LWE_TRANSCRIPTION_TEMPLATE
+        overrides = template_call[1]["overrides"]["request_overrides"]
+        assert overrides["preset"] == LWE_DEFAULT_PRESET
+        assert overrides["files"][0].content == [
+            {
+                "type": "input_audio",
+                "input_audio": {
+                    "data": audio_transcription["signed_url"],
+                    "format": "wav",
+                },
+            }
+        ]
 
-        with patch.object(
-            pipeline, "_download_file", return_value=mock_response
-        ) as mock_download:
-            # Test without fallback
-            pipeline._run_model_with_template(
-                transcription=audio_transcription, use_fallback=False
-            )
-            mock_download.assert_called_once_with(audio_transcription)
-            template_call = mock_lwe_setup["backend"].run_template.call_args
-            assert template_call[0][0] == LWE_TRANSCRIPTION_TEMPLATE
-            assert "files" in template_call[1]["overrides"]["request_overrides"]
-            assert isinstance(
-                template_call[1]["overrides"]["request_overrides"]["files"][0],
-                HumanMessage,
-            )
-            assert (
-                template_call[1]["overrides"]["request_overrides"]["files"][0].content[
-                    0
-                ]["data"]
-                == b"test_audio_data"
-            )
-            mock_download.reset_mock()
-            # Test with fallback
-            pipeline._run_model_with_template(
-                transcription=audio_transcription, use_fallback=True
-            )
-            mock_download.assert_called_once_with(audio_transcription)
-            template_call = mock_lwe_setup["backend"].run_template.call_args
-            assert template_call[0][0] == LWE_TRANSCRIPTION_TEMPLATE
-            assert (
-                template_call[1]["overrides"]["request_overrides"]["preset"]
-                == LWE_FALLBACK_PRESET
-            )
-            assert "files" in template_call[1]["overrides"]["request_overrides"]
-            assert isinstance(
-                template_call[1]["overrides"]["request_overrides"]["files"][0],
-                HumanMessage,
-            )
-            assert (
-                template_call[1]["overrides"]["request_overrides"]["files"][0].content[
-                    0
-                ]["data"]
-                == b"test_audio_data"
-            )
+        pipeline._run_model_with_template(
+            transcription=audio_transcription, use_fallback=True
+        )
+        template_call = mock_lwe_setup["backend"].run_template.call_args
+        assert template_call[0][0] == LWE_TRANSCRIPTION_TEMPLATE
+        overrides = template_call[1]["overrides"]["request_overrides"]
+        assert overrides["preset"] == LWE_FALLBACK_PRESET
+        assert overrides["files"][0].content == [
+            {
+                "type": "media",
+                "mime_type": "audio/wav",
+                "file_uri": audio_transcription["signed_url"],
+            }
+        ]
 
     def test_process_with_error_handling_direct(
         self, pipeline_args, audio_transcription
@@ -1631,7 +1629,6 @@ invalid
             assert result.success is True
             assert result.transcription == "success"
             mock_determine_valid.assert_not_called()  # Verify not called on success
-
 
         mock_determine_valid.reset_mock()
 

@@ -162,7 +162,9 @@ class TestTranscriptionPipeline:
 
     @patch("srt_labeler.main.SrtLabeler.run_single")
     @patch("srt_labeler.main.SrtLabeler.run_continuous")
-    def test_run_continuous_mode(self, mock_run_continuous, mock_run_single, srt_labeler):
+    def test_run_continuous_mode(
+        self, mock_run_continuous, mock_run_single, srt_labeler
+    ):
         srt_labeler.continuous = 60
         srt_labeler.run()
         mock_run_continuous.assert_called_once_with(60)
@@ -181,8 +183,12 @@ class TestTranscriptionPipeline:
 
         mock_sleep.side_effect = side_effect
 
-        with patch.object(srt_labeler, "retrieve_transcription_data", return_value=test_transcriptions) as mock_retrieve:
-            with patch.object(srt_labeler.pipeline, "process_transcriptions") as mock_process:
+        with patch.object(
+            srt_labeler, "retrieve_transcription_data", return_value=test_transcriptions
+        ) as mock_retrieve:
+            with patch.object(
+                srt_labeler.pipeline, "process_transcriptions"
+            ) as mock_process:
                 srt_labeler.run_continuous(5)
                 # Should have called retrieve_transcription_data at least once
                 assert mock_retrieve.call_count >= 1
@@ -198,8 +204,12 @@ class TestTranscriptionPipeline:
             # Set running to False after first processing
             srt_labeler.running = False
 
-        with patch.object(srt_labeler, "retrieve_transcription_data", return_value=test_transcriptions) as mock_retrieve:
-            with patch.object(srt_labeler.pipeline, "process_transcriptions", side_effect=mock_process) as mock_process:
+        with patch.object(
+            srt_labeler, "retrieve_transcription_data", return_value=test_transcriptions
+        ) as mock_retrieve:
+            with patch.object(
+                srt_labeler.pipeline, "process_transcriptions", side_effect=mock_process
+            ) as mock_process:
                 srt_labeler.run_continuous(60)
 
                 # Should have called retrieve_transcription_data once
@@ -211,8 +221,12 @@ class TestTranscriptionPipeline:
         """Test that run_single retrieves transcriptions and processes them."""
         test_transcriptions = [{"id": "1", "url": "url1"}]
 
-        with patch.object(srt_labeler, "retrieve_transcription_data", return_value=test_transcriptions) as mock_retrieve:
-            with patch.object(srt_labeler.pipeline, "process_transcriptions") as mock_process:
+        with patch.object(
+            srt_labeler, "retrieve_transcription_data", return_value=test_transcriptions
+        ) as mock_retrieve:
+            with patch.object(
+                srt_labeler.pipeline, "process_transcriptions"
+            ) as mock_process:
                 srt_labeler.run_single()
 
                 # Should have called retrieve_transcription_data once
@@ -231,8 +245,12 @@ class TestTranscriptionPipeline:
         def mock_process(*args):
             srt_labeler.running = False
 
-        with patch.object(srt_labeler, "retrieve_transcription_data", return_value=test_transcriptions):
-            with patch.object(srt_labeler.pipeline, "process_transcriptions", side_effect=mock_process):
+        with patch.object(
+            srt_labeler, "retrieve_transcription_data", return_value=test_transcriptions
+        ):
+            with patch.object(
+                srt_labeler.pipeline, "process_transcriptions", side_effect=mock_process
+            ):
                 srt_labeler.run_continuous(5)
 
         # Verify signal handler was registered
@@ -275,7 +293,7 @@ class TestTranscriptionPipeline:
                 domain="test_domain",
                 stats_db=custom_stats_db,
                 max_workers=4,
-                debug=True
+                debug=True,
             )
 
             # Verify all parameters are passed correctly
@@ -285,15 +303,13 @@ class TestTranscriptionPipeline:
                 domain="test_domain",
                 max_workers=4,
                 stats_db=custom_stats_db,
-                debug=True
+                debug=True,
             )
 
         # Test case 2: With default parameters
         with patch("srt_labeler.main.SrtLabelerPipeline") as mock_pipeline:
             SrtLabeler(
-                api_key="test_key",
-                file_api_key="test_file_key",
-                domain="test_domain"
+                api_key="test_key", file_api_key="test_file_key", domain="test_domain"
             )
 
             # Verify default parameters
@@ -303,7 +319,7 @@ class TestTranscriptionPipeline:
                 domain="test_domain",
                 max_workers=None,
                 stats_db=mock_default_stats_db,
-                debug=False
+                debug=False,
             )
 
 
@@ -340,11 +356,9 @@ def test_parse_arguments(tmp_path):
         assert args.stats_db == custom_stats_db
         assert args.max_workers == 4
 
+
 def test_parse_arguments_with_continuous():
-    test_args = [
-        "--api-key", "test_api_key",
-        "--continuous", "60"
-    ]
+    test_args = ["--api-key", "test_api_key", "--continuous", "60"]
     with patch("sys.argv", ["main.py"] + test_args):
         args = parse_arguments()
         assert args.continuous == 60

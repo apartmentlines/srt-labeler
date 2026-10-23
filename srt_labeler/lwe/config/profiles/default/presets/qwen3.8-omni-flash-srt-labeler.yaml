@@ -1,0 +1,15 @@
+metadata:
+  name: qwen3.8-omni-flash-srt-labeler
+  provider: chat_openai_compat
+model_customizations:
+  model_name: qwen3.8-omni-flash
+  openai_api_base: https://ws-qytehsp2mo0bj79n.us-east-1.maas.aliyuncs.com/compatible-mode/v1
+  api_key_env_var: ALIBABA_API_KEY
+  reasoning_effort: none
+  model_kwargs:
+    modalities:
+      - text
+  use_responses_api: false
+  max_tokens: 16000
+  temperature: 0.0
+  n: 1
