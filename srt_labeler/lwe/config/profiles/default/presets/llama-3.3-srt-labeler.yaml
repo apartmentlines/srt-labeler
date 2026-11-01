@@ -1,6 +1,7 @@
 metadata:
   name: llama-3.3-srt-labeler
   provider: chat_fireworks
+  max_submission_tokens: 16000
 model_customizations:
   max_tokens: 16000
   model_name: accounts/fireworks/models/llama-v3p3-70b-instruct
