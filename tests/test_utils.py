@@ -1,3 +1,7 @@
+"""Exercise utils behavior."""
+
+from __future__ import annotations
+
 import argparse
 import sys
 import pytest
@@ -13,7 +17,7 @@ from srt_labeler.utils import (
 )
 
 
-def test_positive_int():
+def test_positive_int() -> None:
     assert positive_int("5") == 5
     with pytest.raises(argparse.ArgumentTypeError):
         positive_int("-1")
@@ -21,20 +25,20 @@ def test_positive_int():
         positive_int("0")
 
 
-def test_fail_hard(caplog):
+def test_fail_hard(caplog: pytest.LogCaptureFixture) -> None:
     with patch.object(sys, "exit") as mock_exit:
         fail_hard("Test error")
         mock_exit.assert_called_with(1)
         assert "Test error" in caplog.text
 
 
-def test_fail_soft(caplog):
+def test_fail_soft(caplog: pytest.LogCaptureFixture) -> None:
     fail_soft("Soft error")
     assert "Soft error" in caplog.text
 
 
 @patch("requests.get")
-def test_get_request_success(mock_get):
+def test_get_request_success(mock_get: Mock) -> None:
     mock_response = Mock()
     mock_response.status_code = 200
     mock_get.return_value = mock_response
@@ -44,14 +48,14 @@ def test_get_request_success(mock_get):
 
 @patch("requests.get")
 @patch("tenacity.nap.time.sleep")  # Patch sleep to avoid delays
-def test_get_request_failure(_, mock_get):
+def test_get_request_failure(_: Mock, mock_get: Mock) -> None:
     mock_get.side_effect = requests.exceptions.RequestException
     with pytest.raises(tenacity.RetryError):
         get_request("http://example.com", params={"api_key": "test_key"})
 
 
 @patch("requests.post")
-def test_post_request_success(mock_post):
+def test_post_request_success(mock_post: Mock) -> None:
     mock_response = Mock()
     mock_response.status_code = 200
     mock_post.return_value = mock_response
@@ -61,7 +65,7 @@ def test_post_request_success(mock_post):
 
 @patch("requests.post")
 @patch("tenacity.nap.time.sleep")  # Patch sleep to avoid delays
-def test_post_request_failure(_, mock_post):
+def test_post_request_failure(_: Mock, mock_post: Mock) -> None:
     mock_post.side_effect = requests.exceptions.RequestException
     with pytest.raises(tenacity.RetryError):
         post_request("http://example.com", data={"key": "value"})

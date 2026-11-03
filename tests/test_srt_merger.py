@@ -1,3 +1,9 @@
+"""Exercise srt merger behavior."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from typing import cast
 import pytest
 from unittest.mock import patch
 from pathlib import Path
@@ -14,7 +20,7 @@ from srt_labeler.merger import (
 
 
 # Test SrtMergeError
-def test_srtmergeerror_init_with_message():
+def test_srtmergeerror_init_with_message() -> None:
     """Test SrtMergeError initialization with message."""
     message = "test error"
     error = SrtMergeError(message)
@@ -22,21 +28,23 @@ def test_srtmergeerror_init_with_message():
 
 
 # Test SrtMerger.__init__
-def test_srtmerger_init_default_values():
+def test_srtmerger_init_default_values() -> None:
     """Test SrtMerger initialization with default values."""
     merger = SrtMerger()
     assert merger.valid_labels == [label.lower() for label in DEFAULT_VALID_LABELS]
     assert merger.log is not None
 
 
-def test_srtmerger_init_with_custom_labels():
+def test_srtmerger_init_with_custom_labels() -> None:
     """Test SrtMerger initialization with custom valid labels."""
     custom_labels = ["host", "guest"]
     merger = SrtMerger(valid_labels=custom_labels)
     assert merger.valid_labels == [label.lower() for label in custom_labels]
 
 
-def test_srtmerger_init_enables_debug_logging(capsys):
+def test_srtmerger_init_enables_debug_logging(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     """Test SrtMerger initialization with debug mode."""
     merger = SrtMerger(debug=True)
     merger.log.debug("test debug message")
@@ -44,7 +52,7 @@ def test_srtmerger_init_enables_debug_logging(capsys):
     assert "test debug message" in captured.err
 
 
-def test_srtmerger_init_with_custom_srt_module():
+def test_srtmerger_init_with_custom_srt_module() -> None:
     """Test SrtMerger initialization with custom srt module."""
     mock_srt = Mock()
     merger = SrtMerger(srt_module=mock_srt)
@@ -52,11 +60,11 @@ def test_srtmerger_init_with_custom_srt_module():
 
 
 @pytest.fixture
-def mock_subtitle():
+def mock_subtitle() -> Callable[..., Subtitle]:
     """Fixture providing a mock subtitle with configurable content."""
 
-    def _make_sub(content: str = "test"):
-        sub = create_autospec(Subtitle, instance=True)
+    def _make_sub(content: str = "test") -> Subtitle:
+        sub = cast(Subtitle, create_autospec(Subtitle, instance=True))
         sub.content = content
         sub.start = datetime.timedelta(seconds=1)
         sub.end = datetime.timedelta(seconds=2)
@@ -67,7 +75,9 @@ def mock_subtitle():
 
 
 # Test _validate_subtitle_counts
-def test_validatesubtitlecounts_with_matching_counts(mock_subtitle):
+def test_validatesubtitlecounts_with_matching_counts(
+    mock_subtitle: Callable[..., Subtitle],
+) -> None:
     """Test validation with matching subtitle counts."""
     merger = SrtMerger()
     subs1 = [mock_subtitle(), mock_subtitle()]
@@ -75,21 +85,27 @@ def test_validatesubtitlecounts_with_matching_counts(mock_subtitle):
     merger._validate_subtitle_counts(subs1, subs2)  # Should not raise
 
 
-def test_validatesubtitlecounts_with_empty_unlabeled(mock_subtitle):
+def test_validatesubtitlecounts_with_empty_unlabeled(
+    mock_subtitle: Callable[..., Subtitle],
+) -> None:
     """Test validation with empty unlabeled file."""
     merger = SrtMerger()
     with pytest.raises(SrtMergeError, match="Input SRT content cannot be empty"):
         merger._validate_subtitle_counts([], [mock_subtitle()])
 
 
-def test_validatesubtitlecounts_with_empty_labeled(mock_subtitle):
+def test_validatesubtitlecounts_with_empty_labeled(
+    mock_subtitle: Callable[..., Subtitle],
+) -> None:
     """Test validation with empty labeled file."""
     merger = SrtMerger()
     with pytest.raises(SrtMergeError, match="Input SRT content cannot be empty"):
         merger._validate_subtitle_counts([mock_subtitle()], [])
 
 
-def test_validatesubtitlecounts_with_mismatched_counts(mock_subtitle):
+def test_validatesubtitlecounts_with_mismatched_counts(
+    mock_subtitle: Callable[..., Subtitle],
+) -> None:
     """Test validation with mismatched subtitle counts."""
     merger = SrtMerger()
     with pytest.raises(SrtMergeError, match="different number of subtitles"):
@@ -109,7 +125,12 @@ def test_validatesubtitlecounts_with_mismatched_counts(mock_subtitle):
         ("OPERATOR: test", False, None),
     ],
 )
-def test_validate_labels(mock_subtitle, content, should_raise, expected_error):
+def test_validate_labels(
+    mock_subtitle: Callable[..., Subtitle],
+    content: str,
+    should_raise: bool,
+    expected_error: str | None,
+) -> None:
     """Test validation of various label formats."""
     merger = SrtMerger()
     sub = mock_subtitle(content)
@@ -122,13 +143,13 @@ def test_validate_labels(mock_subtitle, content, should_raise, expected_error):
 
 
 # Test _extract_speaker
-def test_extract_speaker_simple():
+def test_extract_speaker_simple() -> None:
     """Test extraction of simple speaker label."""
     merger = SrtMerger()
     assert merger._extract_speaker("operator: test") == "operator"
 
 
-def test_extract_speaker_numeric():
+def test_extract_speaker_numeric() -> None:
     """Test extraction of numeric speaker label."""
     merger = SrtMerger()
     assert merger._extract_speaker("speaker1: test") == "speaker1"
@@ -136,7 +157,7 @@ def test_extract_speaker_numeric():
     assert merger._extract_speaker("speaker2: test") == "speaker2"
 
 
-def test_validate_srt_labels_valid_content():
+def test_validate_srt_labels_valid_content() -> None:
     """Test validation of valid SRT content with correct labels."""
     merger = SrtMerger()
     content = """1
@@ -150,7 +171,7 @@ caller: Hi there"""
     assert merger.validate_srt_labels(content) is True
 
 
-def test_validate_srt_labels_invalid_labels():
+def test_validate_srt_labels_invalid_labels() -> None:
     """Test validation of SRT content with invalid labels."""
     merger = SrtMerger()
     content = """1
@@ -160,21 +181,21 @@ invalid: Hello world"""
     assert merger.validate_srt_labels(content) is False
 
 
-def test_validate_srt_labels_empty_content():
+def test_validate_srt_labels_empty_content() -> None:
     """Test validation with empty content."""
     merger = SrtMerger()
     assert merger.validate_srt_labels("") is False
     assert merger.validate_srt_labels(None) is False
 
 
-def test_validate_srt_labels_invalid_format():
+def test_validate_srt_labels_invalid_format() -> None:
     """Test validation with malformed SRT content."""
     merger = SrtMerger()
     content = "not a valid srt format"
     assert merger.validate_srt_labels(content) is False
 
 
-def test_timing_preservation():
+def test_timing_preservation() -> None:
     """Test timing information is preserved throughout the pipeline."""
     merger = SrtMerger()
 
@@ -229,14 +250,16 @@ caller: How are you?
         ("", "Unknown"),
     ],
 )
-def test_extract_speaker_various_inputs(input_text, expected):
+def test_extract_speaker_various_inputs(input_text: str, expected: str | None) -> None:
     """Test extraction of speaker labels from various input formats."""
     merger = SrtMerger()
     assert merger._extract_speaker(input_text) == expected
 
 
 # Test _apply_labels
-def test_applylabels_transfers_labels_correctly(mock_subtitle):
+def test_applylabels_transfers_labels_correctly(
+    mock_subtitle: Callable[..., Subtitle],
+) -> None:
     """Test labels are applied correctly."""
     merger = SrtMerger()
     subs_without = [mock_subtitle("test content")]
@@ -245,7 +268,9 @@ def test_applylabels_transfers_labels_correctly(mock_subtitle):
     assert result[0].content == "operator: test content"
 
 
-def test_applylabels_preserves_original_content(mock_subtitle):
+def test_applylabels_preserves_original_content(
+    mock_subtitle: Callable[..., Subtitle],
+) -> None:
     """Test original content is preserved."""
     merger = SrtMerger()
     original_content = "test content"
@@ -255,7 +280,9 @@ def test_applylabels_preserves_original_content(mock_subtitle):
     assert result[0].content.endswith(original_content)
 
 
-def test_applylabels_handles_empty_content(mock_subtitle):
+def test_applylabels_handles_empty_content(
+    mock_subtitle: Callable[..., Subtitle],
+) -> None:
     """Test handling of empty content."""
     merger = SrtMerger()
     subs_without = [mock_subtitle("")]
@@ -264,7 +291,7 @@ def test_applylabels_handles_empty_content(mock_subtitle):
     assert result[0].content == "operator: "
 
 
-def test_apply_labels_preserves_timing(mock_subtitle):
+def test_apply_labels_preserves_timing(mock_subtitle: Callable[..., Subtitle]) -> None:
     """Test subtitle timing is preserved."""
     merger = SrtMerger()
     start = datetime.timedelta(seconds=1)
@@ -280,7 +307,7 @@ def test_apply_labels_preserves_timing(mock_subtitle):
 
 
 # Test _parse_srt_content
-def test_parsesrtcontent_with_valid_input():
+def test_parsesrtcontent_with_valid_input() -> None:
     """Test parsing valid SRT content."""
     merger = SrtMerger()
     content = """1
@@ -295,7 +322,7 @@ test
     assert result[0].end == datetime.timedelta(seconds=2)
 
 
-def test_parsesrtcontent_with_malformed_input():
+def test_parsesrtcontent_with_malformed_input() -> None:
     """Test parsing malformed SRT content."""
     merger = SrtMerger()
     mock_srt = Mock()
@@ -307,7 +334,7 @@ def test_parsesrtcontent_with_malformed_input():
         merger._parse_srt_content("invalid content")
 
 
-def test_parsesrtcontent_with_empty_input():
+def test_parsesrtcontent_with_empty_input() -> None:
     """Test parsing empty SRT content."""
     merger = SrtMerger()
     mock_srt = Mock()
@@ -318,7 +345,7 @@ def test_parsesrtcontent_with_empty_input():
     assert len(result) == 0
 
 
-def test_parse_srt_content_preserves_timing():
+def test_parse_srt_content_preserves_timing() -> None:
     """Test parsing preserves timing information."""
     merger = SrtMerger()
     content = """1
@@ -346,7 +373,13 @@ test
         (None, "utf-8", None, True),  # Missing file
     ],
 )
-def test_read_file(tmp_path, content, encoding, expected, should_raise):
+def test_read_file(
+    tmp_path: Path,
+    content: str | bytes | None,
+    encoding: str | None,
+    expected: str | None,
+    should_raise: bool,
+) -> None:
     """Test reading files with various content and encodings."""
     merger = SrtMerger()
     test_file = tmp_path / "test.srt"
@@ -367,7 +400,7 @@ def test_read_file(tmp_path, content, encoding, expected, should_raise):
 
 
 # Test merge
-def test_merge_with_valid_inputs():
+def test_merge_with_valid_inputs() -> None:
     """Test successful merge of SRT files."""
     merger = SrtMerger()
 
@@ -404,7 +437,9 @@ caller: How are you?
     assert result == expected_output
 
 
-def test_merge_with_invalid_label_format(mock_subtitle):
+def test_merge_with_invalid_label_format(
+    mock_subtitle: Callable[..., Subtitle],
+) -> None:
     """Test merge with invalid label format."""
     merger = SrtMerger()
     mock_srt = Mock()
@@ -415,7 +450,7 @@ def test_merge_with_invalid_label_format(mock_subtitle):
         merger.merge("unlabeled", "labeled")
 
 
-def test_merge_with_count_mismatch(mock_subtitle):
+def test_merge_with_count_mismatch(mock_subtitle: Callable[..., Subtitle]) -> None:
     """Test merge with count mismatch."""
     merger = SrtMerger()
     mock_srt = Mock()
@@ -429,7 +464,7 @@ def test_merge_with_count_mismatch(mock_subtitle):
         merger.merge("unlabeled", "labeled")
 
 
-def test_merge_preserves_timing():
+def test_merge_preserves_timing() -> None:
     """Test merge preserves timing information."""
     merger = SrtMerger()
 
@@ -454,7 +489,7 @@ operator: test content
     assert result == expected_output
 
 
-def test_merge_with_empty_input():
+def test_merge_with_empty_input() -> None:
     """Test merge with empty input."""
     merger = SrtMerger()
     mock_srt = Mock()
@@ -466,7 +501,7 @@ def test_merge_with_empty_input():
 
 
 # Test parse_arguments
-def test_parsearguments_with_required_args():
+def test_parsearguments_with_required_args() -> None:
     """Test parsing required arguments."""
     test_args = ["unlabeled.srt", "labeled.srt"]
     with patch("sys.argv", ["script.py"] + test_args):
@@ -477,7 +512,7 @@ def test_parsearguments_with_required_args():
         assert args.debug is False
 
 
-def test_parsearguments_with_custom_labels():
+def test_parsearguments_with_custom_labels() -> None:
     """Test parsing custom valid labels."""
     test_args = [
         "unlabeled.srt",
@@ -490,7 +525,7 @@ def test_parsearguments_with_custom_labels():
         assert args.valid_labels == ["host", "guest", "moderator"]
 
 
-def test_parsearguments_with_custom_labels_with_spaces():
+def test_parsearguments_with_custom_labels_with_spaces() -> None:
     """Test parsing custom valid labels with spaces."""
     test_args = [
         "unlabeled.srt",
@@ -503,7 +538,7 @@ def test_parsearguments_with_custom_labels_with_spaces():
         assert args.valid_labels == ["host", "guest", "moderator"]
 
 
-def test_parsearguments_enables_debug_mode():
+def test_parsearguments_enables_debug_mode() -> None:
     """Test parsing debug mode flag."""
     test_args = [
         "unlabeled.srt",
@@ -515,14 +550,16 @@ def test_parsearguments_enables_debug_mode():
         assert args.debug is True
 
 
-def test_parsearguments_with_missing_required_args():
+def test_parsearguments_with_missing_required_args() -> None:
     """Test missing required arguments."""
     with pytest.raises(SystemExit):
         parse_arguments()
 
 
 # Test main
-def test_main_with_valid_inputs(capsys, tmp_path):
+def test_main_with_valid_inputs(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
     """Test successful main execution."""
     unlabeled = tmp_path / "unlabeled.srt"
     labeled = tmp_path / "labeled.srt"
@@ -537,7 +574,9 @@ def test_main_with_valid_inputs(capsys, tmp_path):
     assert "operator: test" in captured.out
 
 
-def test_main_outputs_merged_content_to_stdout(capsys, tmp_path):
+def test_main_outputs_merged_content_to_stdout(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
     """Test main outputs merged content to stdout."""
     unlabeled = tmp_path / "unlabeled.srt"
     labeled = tmp_path / "labeled.srt"
@@ -553,7 +592,7 @@ def test_main_outputs_merged_content_to_stdout(capsys, tmp_path):
     assert not captured.err  # Check stderr is empty
 
 
-def test_integration_full_workflow(tmp_path):
+def test_integration_full_workflow(tmp_path: Path) -> None:
     """Test full workflow from file reading to merged output."""
     unlabeled = tmp_path / "unlabeled.srt"
     labeled = tmp_path / "labeled.srt"

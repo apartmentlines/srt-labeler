@@ -33,7 +33,7 @@ def no_http(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("requests.post", blocked)
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def lwe_directories(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[Path, Path]:
@@ -43,12 +43,12 @@ def lwe_directories(
     profile_dir.mkdir(parents=True)
     (profile_dir / "config.yaml").write_text(
         "backend_options:\n"
-        "  auto_create_first_user: existing-user\n"
-        "  default_user: existing-user\n"
-        "  default_conversation_id: 42\n"
-        "chat:\n"
-        "  log:\n"
-        "    enabled: true\n",
+        + "  auto_create_first_user: existing-user\n"
+        + "  default_user: existing-user\n"
+        + "  default_conversation_id: 42\n"
+        + "chat:\n"
+        + "  log:\n"
+        + "    enabled: true\n",
         encoding="utf-8",
     )
     data_dir = tmp_path / "data"
@@ -59,9 +59,7 @@ def lwe_directories(
 
 
 @pytest.fixture
-def inputs(
-    tmp_path: Path, lwe_directories: tuple[Path, Path]
-) -> tuple[Path, Path, Path]:
+def inputs(tmp_path: Path) -> tuple[Path, Path, Path]:
     """Create a real WAV and an SRT containing one subtitle."""
     srt_path = tmp_path / "call.srt"
     srt_path.write_text(ORIGINAL, encoding="utf-8")

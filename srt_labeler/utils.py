@@ -1,4 +1,9 @@
+"""Provide HTTP requests, argument validation, and CLI error reporting."""
+
+from __future__ import annotations
+
 import argparse
+from typing import Any
 import sys
 import logging
 import requests
@@ -32,7 +37,7 @@ def fail_soft(message: str) -> None:
     stop=stop_after_attempt(DEFAULT_RETRY_ATTEMPTS),
     wait=wait_exponential(multiplier=DEFAULT_RETRY_BACKOFF),
 )
-def get_request(url: str, params: dict) -> requests.Response:
+def get_request(url: str, params: dict[str, Any]) -> requests.Response:
     response = requests.get(url, params=params, timeout=DOWNLOAD_TIMEOUT)
     response.raise_for_status()
     return response
@@ -42,7 +47,7 @@ def get_request(url: str, params: dict) -> requests.Response:
     stop=stop_after_attempt(DEFAULT_RETRY_ATTEMPTS),
     wait=wait_exponential(multiplier=DEFAULT_RETRY_BACKOFF),
 )
-def post_request(url: str, data: dict) -> requests.Response:
+def post_request(url: str, data: dict[str, Any]) -> requests.Response:
     response = requests.post(url, data=data, timeout=DOWNLOAD_TIMEOUT)
     response.raise_for_status()
     return response

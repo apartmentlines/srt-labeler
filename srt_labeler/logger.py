@@ -1,3 +1,7 @@
+"""Configure console and optional file logging for pipeline components."""
+
+from __future__ import annotations
+
 import logging
 
 STREAM_FORMAT = "%(asctime)s [%(threadName)s] %(levelname)s: %(message)s"
@@ -5,7 +9,9 @@ FILE_FORMAT = "%(asctime)s [%(threadName)s] %(levelname)s: %(message)s"
 
 
 class Logger:
-    def __new__(cls, name, log_file=None, debug=False):
+    def __new__(
+        cls, name: str, log_file: str | None = None, debug: bool = False
+    ) -> logging.Logger:
         """
         Setup instance-specific logger.
 

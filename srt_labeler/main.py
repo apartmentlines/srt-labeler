@@ -1,8 +1,13 @@
+"""Run the production SRT labeling pipeline."""
+
+from __future__ import annotations
+
 import argparse
 import signal
 import time
 import logging
-from typing import Optional, List, Any
+from typing import Any
+from types import FrameType
 from copy import deepcopy
 from .logger import Logger
 from .pipeline import SrtLabelerPipeline
@@ -60,7 +65,7 @@ class SrtLabeler:
     def build_retrieve_request_url(self) -> str:
         return f"https://{self.domain}/al/transcriptions/retrieve/operator-recordings/{TRANSCRIPTION_STATE_ACTIVE}"
 
-    def build_retrieve_request_params(self) -> dict:
+    def build_retrieve_request_params(self) -> dict[str, str]:
         params = {"api_key": str(self.api_key)}
         if self.limit is not None:
             params["limit"] = str(self.limit)
@@ -105,7 +110,7 @@ class SrtLabeler:
         with self.pipeline:  # Use context manager here
             self.pipeline.process_transcriptions(transcriptions)
 
-    def _signal_handler(self, sig, frame):
+    def _signal_handler(self, _sig: int, _frame: FrameType | None) -> None:
         self.log.info("Received interrupt signal, shutting down gracefully...")
         self.running = False
 

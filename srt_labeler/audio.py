@@ -29,7 +29,7 @@ class AudioAttachmentFactory:
         """
         self.formatters[provider] = formatter
 
-    def create(self, provider: str, signed_url: str) -> HumanMessage:
+    def create(self, provider: str, signed_url: str | None) -> HumanMessage:
         """Build an attachment without downloading or modifying its signed URL.
 
         :param provider: Full provider plugin name selected by the request.

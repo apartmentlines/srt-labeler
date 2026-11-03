@@ -1,6 +1,11 @@
+"""Persist model usage counts and response failures in SQLite."""
+
+from __future__ import annotations
+
+import logging
+from _thread import LockType
 import sqlite3
 import threading
-from typing import Tuple
 from .logger import Logger
 
 
@@ -13,10 +18,10 @@ class StatsDatabase:
         :param db_path: Path to SQLite database file
         :param debug: Enable debug logging
         """
-        self.db_path = db_path
-        self.log = Logger(self.__class__.__name__, debug=debug)
-        self.lock = threading.Lock()
-        self.thread_local = threading.local()
+        self.db_path: str = db_path
+        self.log: logging.Logger = Logger(self.__class__.__name__, debug=debug)
+        self.lock: LockType = threading.Lock()
+        self.thread_local: threading.local = threading.local()
         self.initialize()
 
     def _get_conn(self) -> sqlite3.Connection:
@@ -34,8 +39,7 @@ class StatsDatabase:
             with self.lock:
                 conn = self._get_conn()
                 cursor = conn.cursor()
-                cursor.execute(
-                    """
+                cursor.execute("""
                     CREATE TABLE IF NOT EXISTS totals (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         llm_primary INTEGER,
@@ -43,10 +47,8 @@ class StatsDatabase:
                         llm_total INTEGER,
                         hard_failures INTEGER
                     )
-                """
-                )
-                cursor.execute(
-                    """
+                """)
+                cursor.execute("""
                     CREATE TABLE IF NOT EXISTS model_response_errors (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         transcription_id INTEGER,
@@ -55,8 +57,7 @@ class StatsDatabase:
                         model_response TEXT,
                         fallback INTEGER
                     )
-                """
-                )
+                """)
                 cursor.execute("SELECT COUNT(*) FROM totals")
                 if cursor.fetchone()[0] == 0:
                     query = "INSERT INTO totals (llm_primary, llm_fallback, llm_total, hard_failures) VALUES (0, 0, 0, 0)"
@@ -93,7 +94,7 @@ class StatsDatabase:
         except sqlite3.Error as e:
             self.log.error(f"Failed to increment fallback counter: {e}")
 
-    def get_totals(self) -> Tuple[int, int, int, int]:
+    def get_totals(self) -> tuple[int, int, int, int]:
         """Get current totals.
 
         :return: Tuple of (primary_count, fallback_count, total_count)

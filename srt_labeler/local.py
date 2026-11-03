@@ -138,8 +138,10 @@ class LocalLabeler:
 def parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Parse a single local labeling run."""
     parser = argparse.ArgumentParser(
-        description="Label a local SRT using a local WAV and one model preset. "
-        "Inputs are sent to the selected model provider; no production API is used."
+        description=(
+            "Label a local SRT using a local WAV and one model preset. "
+            + "Inputs are sent to the selected model provider; no production API is used."
+        )
     )
     parser.add_argument("--srt", type=Path, required=True, help="Input UTF-8 SRT file")
     parser.add_argument(

@@ -9,12 +9,15 @@ labels are extracted and applied to the corresponding subtitles from the
 unlabeled file.
 """
 
+from __future__ import annotations
+
+import logging
 import sys
 import re
 import srt
 import argparse
 from pathlib import Path
-from typing import List, Any
+from typing import Any
 
 from .logger import Logger
 
@@ -33,7 +36,7 @@ class SrtMerger:
 
     def __init__(
         self,
-        valid_labels: List[str] = DEFAULT_VALID_LABELS,
+        valid_labels: list[str] = DEFAULT_VALID_LABELS,
         debug: bool = False,
         srt_module: Any = srt,
     ) -> None:
@@ -43,12 +46,12 @@ class SrtMerger:
         :param debug: Enable debug logging
         :param srt_module: srt module to use (for testing)
         """
-        self.log = Logger(self.__class__.__name__, debug=debug)
-        self.valid_labels = [label.lower() for label in valid_labels]
-        self.srt_module = srt_module
+        self.log: logging.Logger = Logger(self.__class__.__name__, debug=debug)
+        self.valid_labels: list[str] = [label.lower() for label in valid_labels]
+        self.srt_module: Any = srt_module
 
     def _validate_subtitle_counts(
-        self, subs_without: List[srt.Subtitle], subs_with: List[srt.Subtitle]
+        self, subs_without: list[srt.Subtitle], subs_with: list[srt.Subtitle]
     ) -> None:
         """Validate that subtitle counts match between files.
 
@@ -76,7 +79,7 @@ class SrtMerger:
         except Exception:
             return False
 
-    def _validate_labels(self, subs: List[srt.Subtitle]) -> None:
+    def _validate_labels(self, subs: list[srt.Subtitle]) -> None:
         """Validate speaker labels in subtitles.
 
         :param subs: List of subtitles to validate
@@ -87,7 +90,7 @@ class SrtMerger:
             if label.lower() != "unknown" and label.lower() not in self.valid_labels:
                 raise SrtMergeError(
                     f"Invalid label '{label}' found in subtitle at {sub.start} - {sub.end}. "
-                    f"Allowed labels are: {self.valid_labels}"
+                    + f"Allowed labels are: {self.valid_labels}"
                 )
 
     def _extract_speaker(self, text: str) -> str:
@@ -102,8 +105,8 @@ class SrtMerger:
         return "Unknown"
 
     def _apply_labels(
-        self, subs_without: List[srt.Subtitle], subs_with: List[srt.Subtitle]
-    ) -> List[srt.Subtitle]:
+        self, subs_without: list[srt.Subtitle], subs_with: list[srt.Subtitle]
+    ) -> list[srt.Subtitle]:
         """Apply speaker labels from labeled to unlabeled subtitles.
 
         :param subs_without: List of subtitles without speaker labels
@@ -115,7 +118,7 @@ class SrtMerger:
             subs_without[i].content = f"{speaker}: {subs_without[i].content}"
         return subs_without
 
-    def _parse_srt_content(self, srt_content: str) -> List[srt.Subtitle]:
+    def _parse_srt_content(self, srt_content: str) -> list[srt.Subtitle]:
         try:
             return list(self.srt_module.parse(srt_content))
         except self.srt_module.SRTParseError as e:
@@ -188,7 +191,7 @@ def parse_arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main(args=None) -> None:
+def main(args: argparse.Namespace | None = None) -> None:
     """Main entry point for SRT merging script."""
     args = parse_arguments()
     try:

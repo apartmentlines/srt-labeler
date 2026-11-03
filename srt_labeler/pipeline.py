@@ -254,7 +254,7 @@ class SrtLabelerPipeline:
 
         # Thread-local storage for LWE backends
         self.thread_local: threading.local = threading.local()
-        self.audio_attachments = AudioAttachmentFactory()
+        self.audio_attachments: AudioAttachmentFactory = AudioAttachmentFactory()
 
         # Initialize SrtMerger
         self.merger: SrtMerger = SrtMerger(debug=debug)

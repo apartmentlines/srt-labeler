@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any
+from collections.abc import Callable
+from functools import partial
+
 import os
 import pytest
 import requests
@@ -14,17 +19,15 @@ from lwe.core.provider_manager import ProviderManager
 from lwe import ApiBackend
 from srt_labeler.pipeline import (
     SrtLabelerPipeline,
-    BaseError,
-    RequestError,
     AuthenticationError,
     ResponseValidationError,
-    ModelResponseFormattingError,
     RequestFileNotFoundError,
     TranscriptionResult,
     TranscriptionErrorHandler,
     ApiPayloadBuilder,
     FallbackResultValidator,
 )
+from srt_labeler.errors import BaseError, RequestError, ModelResponseFormattingError
 from srt_labeler.merger import SrtMerger
 from srt_labeler.merger import SrtMergeError
 from srt_labeler.constants import (
@@ -42,24 +45,20 @@ from srt_labeler.constants import (
 def mock_lwe_backend():
     mock_backend = Mock(spec=ApiBackend)
     mock_backend.provider_manager = Mock(spec=ProviderManager)
-    mock_backend.provider_manager.full_name.side_effect = lambda name: (
-        ProviderManager.full_name(mock_backend.provider_manager, name)
+    mock_backend.provider_manager.full_name.side_effect = partial(
+        ProviderManager.full_name, mock_backend.provider_manager
     )
     mock_backend.preset_manager = Mock()
-    mock_backend.preset_manager.ensure_preset.side_effect = lambda name: (
-        True,
-        (
-            {
-                "provider": (
-                    "chat_google_genai"
-                    if name == LWE_FALLBACK_PRESET
-                    else "chat_openai_compat"
-                )
-            },
-            {},
-        ),
-        "Preset found",
-    )
+
+    def ensure_preset(
+        name: str,
+    ) -> tuple[bool, tuple[dict[str, str], dict[str, Any]], str]:
+        provider = (
+            "chat_google_genai" if name == LWE_FALLBACK_PRESET else "chat_openai_compat"
+        )
+        return True, ({"provider": provider}, {}), "Preset found"
+
+    mock_backend.preset_manager.ensure_preset.side_effect = ensure_preset
     # Configure run_template to return a tuple (success, response, error)
     mock_backend.run_template.return_value = (True, "test response", None)
     return mock_backend
@@ -72,7 +71,7 @@ def mock_config():
 
 
 @pytest.fixture
-def mock_lwe_setup(mock_config, mock_lwe_backend):
+def mock_lwe_setup(mock_config: Mock, mock_lwe_backend: Mock):
     """Fixture to handle all LWE mocking needs."""
     with (
         patch(
@@ -131,7 +130,7 @@ class TestSrtLabelerPipeline:
             yield {"get": mock_get, "sleep": mock_sleep}
 
     @pytest.fixture
-    def pipeline_args(self, tmp_path):
+    def pipeline_args(self, tmp_path: Path):
         """Fixture providing pipeline initialization arguments."""
         return {
             "api_key": "test_api_key",
@@ -141,7 +140,9 @@ class TestSrtLabelerPipeline:
             "stats_db": str(tmp_path / "stats.db"),
         }
 
-    def test_pipeline_initialization_with_default_parameters(self, pipeline_args):
+    def test_pipeline_initialization_with_default_parameters(
+        self, pipeline_args: dict[str, Any]
+    ) -> None:
         pipeline = SrtLabelerPipeline(**pipeline_args)
         assert pipeline.api_key == "test_api_key"
         assert pipeline.file_api_key == "test_file_api_key"
@@ -154,7 +155,9 @@ class TestSrtLabelerPipeline:
         assert pipeline.executor._max_workers == DEFAULT_LWE_POOL_LIMIT
         assert pipeline.executor._thread_name_prefix == "LWEWorker"
 
-    def test_pipeline_initialization_with_custom_parameters(self, tmp_path):
+    def test_pipeline_initialization_with_custom_parameters(
+        self, tmp_path: Path
+    ) -> None:
         custom_stats_db = str(tmp_path / "custom_stats.db")
         pipeline = SrtLabelerPipeline(
             api_key="custom_api_key",
@@ -172,7 +175,7 @@ class TestSrtLabelerPipeline:
         assert pipeline.stats_db_path == custom_stats_db
         assert hasattr(pipeline, "stats")
 
-    def test_pipeline_initialization_missing_credentials(self):
+    def test_pipeline_initialization_missing_credentials(self) -> None:
         with pytest.raises(ValueError):
             SrtLabelerPipeline()
         with pytest.raises(ValueError):
@@ -181,14 +184,20 @@ class TestSrtLabelerPipeline:
             SrtLabelerPipeline(api_key="test", domain="test")
 
     def test_process_transcriptions(
-        self, pipeline_args, audio_transcription, mock_audio_response, mock_network
-    ):
+        self,
+        pipeline_args: dict[str, Any],
+        audio_transcription: dict[str, Any],
+        mock_audio_response: Mock,
+        mock_network: dict[str, Mock],
+    ) -> None:
         """Test processing multiple transcriptions."""
         mock_executor = Mock(spec=ThreadPoolExecutor)
+
         # Configure the mock executor's submit to actually call the function
-        mock_executor.submit.side_effect = lambda f, *args: Mock(
-            result=lambda: f(*args)
-        )
+        def submit(function: Callable[..., Any], *args: Any) -> Mock:
+            return Mock(result=lambda: function(*args))
+
+        mock_executor.submit.side_effect = submit
 
         with patch(
             "srt_labeler.pipeline.ThreadPoolExecutor", return_value=mock_executor
@@ -212,8 +221,11 @@ class TestSrtLabelerPipeline:
 
     @pytest.mark.usefixtures("mock_lwe_setup")
     def test_process_transcriptions_error_handling(
-        self, pipeline_args, mock_audio_response, mock_network
-    ):
+        self,
+        pipeline_args: dict[str, Any],
+        mock_audio_response: Mock,
+        mock_network: dict[str, Mock],
+    ) -> None:
         """Test error handling during transcription processing."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         mock_network["get"].return_value = mock_audio_response
@@ -273,13 +285,16 @@ class TestSrtLabelerPipeline:
 
     @pytest.mark.usefixtures("mock_lwe_setup")
     def test_process_transcriptions_multiple_errors(
-        self, pipeline_args, mock_audio_response, mock_network
-    ):
+        self,
+        pipeline_args: dict[str, Any],
+        mock_audio_response: Mock,
+        mock_network: dict[str, Mock],
+    ) -> None:
         """Test handling of multiple error types including audio-related errors."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         mock_network["get"].return_value = mock_audio_response
 
-        def side_effect(transcription, _):
+        def side_effect(transcription: dict[str, Any], _: Mock):
             if transcription["id"] == 1:
                 return TranscriptionResult(
                     transcription_id=1,
@@ -348,7 +363,9 @@ class TestSrtLabelerPipeline:
                     r.success and r.transcription == "Success" for r in update_calls
                 )
 
-    def test_check_download_errors_http_404(self, pipeline_args):
+    def test_check_download_errors_http_404(
+        self, pipeline_args: dict[str, Any]
+    ) -> None:
         """Test that a 404 response raises RequestFileNotFoundError."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         error = requests.HTTPError("404 Client Error: Not Found for url")
@@ -359,7 +376,9 @@ class TestSrtLabelerPipeline:
             pipeline._check_download_errors_http(mock_response, error)
         assert "Error downloading audio file: 404" in str(exc_info.value)
 
-    def test_check_download_errors_http_other_error(self, pipeline_args):
+    def test_check_download_errors_http_other_error(
+        self, pipeline_args: dict[str, Any]
+    ) -> None:
         """Test that other HTTP errors raise the original exception."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         error = requests.HTTPError("500 Server Error: Internal Server Error for url")
@@ -370,7 +389,9 @@ class TestSrtLabelerPipeline:
             pipeline._check_download_errors_http(mock_response, error)
         assert "500 Server Error" in str(exc_info.value)
 
-    def test_check_download_errors_http_no_response(self, pipeline_args):
+    def test_check_download_errors_http_no_response(
+        self, pipeline_args: dict[str, Any]
+    ) -> None:
         """Test that when response is None, the original exception is raised."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         error = requests.ConnectionError("Connection failed")
@@ -379,7 +400,9 @@ class TestSrtLabelerPipeline:
             pipeline._check_download_errors_http(response=None, error=error)
         assert "Connection failed" in str(exc_info.value)
 
-    def test_check_download_errors_api_json_error(self, pipeline_args):
+    def test_check_download_errors_api_json_error(
+        self, pipeline_args: dict[str, Any]
+    ) -> None:
         """Test that a JSON error response raises RequestError."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         mock_response = Mock(spec=requests.Response)
@@ -392,7 +415,9 @@ class TestSrtLabelerPipeline:
             exc_info.value
         )
 
-    def test_check_download_errors_api_no_error(self, pipeline_args):
+    def test_check_download_errors_api_no_error(
+        self, pipeline_args: dict[str, Any]
+    ) -> None:
         """Test that when content-type is not JSON, no exception is raised."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         mock_response = Mock(spec=requests.Response)
@@ -401,13 +426,15 @@ class TestSrtLabelerPipeline:
         # This should not raise any exception
         pipeline._check_download_errors_api(mock_response)  # No exception expected
 
-    def test_check_download_errors_api_response_none(self, pipeline_args):
+    def test_check_download_errors_api_response_none(
+        self, pipeline_args: dict[str, Any]
+    ) -> None:
         """Test that when response is None, the method does nothing."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         # This should not raise any exception
         pipeline._check_download_errors_api(response=None)  # No exception expected
 
-    def test_try_download_file_success(self, pipeline_args):
+    def test_try_download_file_success(self, pipeline_args: dict[str, Any]) -> None:
         """Test successful file download via _try_download_file."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         mock_response = Mock(spec=requests.Response)
@@ -427,7 +454,7 @@ class TestSrtLabelerPipeline:
             mock_check_api.assert_called_once_with(mock_response)
             assert content == b"Audio data"
 
-    def test_try_download_file_http_error(self, pipeline_args):
+    def test_try_download_file_http_error(self, pipeline_args: dict[str, Any]) -> None:
         """Test that HTTP errors in _download_file propagate up through _try_download_file."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         error = requests.HTTPError("500 Client Error")
@@ -439,7 +466,7 @@ class TestSrtLabelerPipeline:
             assert "500 Client Error" in str(exc_info.value)
             mock_download.assert_called_once()
 
-    def test_try_download_file_api_error(self, pipeline_args):
+    def test_try_download_file_api_error(self, pipeline_args: dict[str, Any]) -> None:
         """Test handling of API errors in _try_download_file."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         mock_response = Mock(spec=requests.Response)
@@ -462,7 +489,9 @@ class TestSrtLabelerPipeline:
             assert "API error occurred" in str(exc_info.value)
             mock_download.assert_called_once()
 
-    def test_try_download_file_empty_response(self, pipeline_args):
+    def test_try_download_file_empty_response(
+        self, pipeline_args: dict[str, Any]
+    ) -> None:
         """Test handling of empty response content in _try_download_file."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         mock_response = Mock(spec=requests.Response)
@@ -475,8 +504,11 @@ class TestSrtLabelerPipeline:
             assert "Received empty response" in str(exc_info.value)
 
     def test_download_file_success(
-        self, pipeline_args, audio_transcription, mock_network
-    ):
+        self,
+        pipeline_args: dict[str, Any],
+        audio_transcription: dict[str, Any],
+        mock_network: dict[str, Mock],
+    ) -> None:
         """Test successful file download."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         mock_response = Mock(spec=requests.Response)
@@ -494,8 +526,11 @@ class TestSrtLabelerPipeline:
         assert response == mock_response
 
     def test_download_file_network_error_retries(
-        self, pipeline_args, audio_transcription, mock_network
-    ):
+        self,
+        pipeline_args: dict[str, Any],
+        audio_transcription: dict[str, Any],
+        mock_network: dict[str, Mock],
+    ) -> None:
         """Test that network errors cause retries."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
 
@@ -519,8 +554,11 @@ class TestSrtLabelerPipeline:
         assert mock_network["get"].call_count == 3  # Retried twice before success
 
     def test_download_file_max_retries_exceeded(
-        self, pipeline_args, audio_transcription, mock_network
-    ):
+        self,
+        pipeline_args: dict[str, Any],
+        audio_transcription: dict[str, Any],
+        mock_network: dict[str, Mock],
+    ) -> None:
         """Test that max retries exceeded raises the exception."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
 
@@ -533,7 +571,10 @@ class TestSrtLabelerPipeline:
         assert "Network Error" in str(exc_info.value)
         assert mock_network["get"].call_count == DEFAULT_RETRY_ATTEMPTS
 
-    def test_add_audio_file(self, pipeline_args, audio_transcription, mock_lwe_setup):
+    @pytest.mark.usefixtures("mock_lwe_setup")
+    def test_add_audio_file(
+        self, pipeline_args: dict[str, Any], audio_transcription: dict[str, Any]
+    ) -> None:
         """Build an audio attachment containing the supplied signed URL."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         pipeline._initialize_worker()
@@ -552,7 +593,7 @@ class TestSrtLabelerPipeline:
         ]
 
     @pytest.mark.usefixtures("mock_lwe_setup")
-    def test_thread_pool_cleanup(self, pipeline_args):
+    def test_thread_pool_cleanup(self, pipeline_args: dict[str, Any]) -> None:
         """Test that thread pool is properly shut down when cleanup is called."""
         mock_executor = Mock(spec=ThreadPoolExecutor)
         with (
@@ -570,7 +611,7 @@ class TestSrtLabelerPipeline:
             mock_close.assert_called_once()
 
     @pytest.mark.usefixtures("mock_lwe_setup")
-    def test_thread_pool_cleanup_context(self, pipeline_args):
+    def test_thread_pool_cleanup_context(self, pipeline_args: dict[str, Any]) -> None:
         """Test that thread pool is properly shut down when used as context manager."""
         mock_executor = Mock(spec=ThreadPoolExecutor)
         with patch(
@@ -581,8 +622,11 @@ class TestSrtLabelerPipeline:
             mock_executor.shutdown.assert_called_once_with(wait=True)
 
     def test_backend_reuse_within_thread(
-        self, pipeline_args, audio_transcription, mock_lwe_setup
-    ):
+        self,
+        pipeline_args: dict[str, Any],
+        audio_transcription: dict[str, Any],
+        mock_lwe_setup: dict[str, Mock],
+    ) -> None:
         """Test that backends are reused by verifying only pool_size backends are created."""
         test_pool_limit = 1
         pipeline = SrtLabelerPipeline(**pipeline_args, max_workers=test_pool_limit)
@@ -596,8 +640,8 @@ class TestSrtLabelerPipeline:
             assert mock_lwe_setup["backend_class"].call_count == test_pool_limit
 
     def test_backend_initialization_with_config_paths(
-        self, pipeline_args, mock_lwe_setup
-    ):
+        self, pipeline_args: dict[str, Any], mock_lwe_setup: dict[str, Mock]
+    ) -> None:
         """Test that backend initialization uses correct config paths."""
         with patch.dict(
             os.environ, {"LWE_CONFIG_DIR": "/test/config", "LWE_DATA_DIR": "/test/data"}
@@ -610,7 +654,9 @@ class TestSrtLabelerPipeline:
                 config_dir="/test/config", data_dir="/test/data"
             )
 
-    def test_backend_debug_mode_configuration(self, pipeline_args, mock_lwe_setup):
+    def test_backend_debug_mode_configuration(
+        self, pipeline_args: dict[str, Any], mock_lwe_setup: dict[str, Mock]
+    ) -> None:
         """Test that debug mode is properly configured in the backend."""
         pipeline_args["debug"] = True
         pipeline = SrtLabelerPipeline(**pipeline_args)
@@ -621,10 +667,10 @@ class TestSrtLabelerPipeline:
 
     def test_process_transcription_with_ai(
         self,
-        pipeline_args,
-        audio_transcription,
-        mock_lwe_setup,
-    ):
+        pipeline_args: dict[str, Any],
+        audio_transcription: dict[str, Any],
+        mock_lwe_setup: dict[str, Mock],
+    ) -> None:
         """Test processing a single transcription with AI model."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         pipeline._initialize_worker()
@@ -657,7 +703,9 @@ Operator: Hello world
                 result.transcription and "Operator: Hello world" in result.transcription
             )
 
-    def test_process_transcription_backup_preset(self, pipeline_args, mock_lwe_setup):
+    def test_process_transcription_backup_preset(
+        self, pipeline_args: dict[str, Any], mock_lwe_setup: dict[str, Mock]
+    ) -> None:
         """Test fallback to backup preset after failures."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         pipeline._initialize_worker()
@@ -724,7 +772,7 @@ Operator: Hello world
                 "file_uri": transcription["signed_url"],
             }
 
-    def test_extract_transcript_section(self, pipeline_args):
+    def test_extract_transcript_section(self, pipeline_args: dict[str, Any]) -> None:
         """Test extraction of transcript section from AI response."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
 
@@ -738,12 +786,9 @@ Operator: Hello
 </transcript>
 """
         result = pipeline._extract_transcript_section(response)
-        assert (
-            result
-            == """1
+        assert result == """1
 00:00:01,000 --> 00:00:02,000
 Operator: Hello"""
-        )
 
         # Test invalid response
         with pytest.raises(ModelResponseFormattingError) as exc_info:
@@ -755,22 +800,26 @@ Operator: Hello"""
             pipeline._extract_transcript_section(None)
         assert "No response provided" in str(exc_info.value)
 
-    def test_prepare_template_vars_basic(self, pipeline_args, audio_transcription):
+    def test_prepare_template_vars_basic(
+        self, pipeline_args: dict[str, Any], audio_transcription: dict[str, Any]
+    ) -> None:
         """Test basic template variable preparation."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         vars = pipeline._prepare_template_vars(audio_transcription)
         assert vars["transcription"] == audio_transcription["transcription"]
         assert len(vars["identifier"]) == UUID_SHORT_LENGTH
 
-    def test_prepare_template_vars_missing_fields(self, pipeline_args):
+    def test_prepare_template_vars_missing_fields(
+        self, pipeline_args: dict[str, Any]
+    ) -> None:
         """Test template vars with missing fields."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         with pytest.raises(KeyError):
             pipeline._prepare_template_vars({"id": 123})
 
     def test_prepare_template_vars_extra_fields(
-        self, pipeline_args, audio_transcription
-    ):
+        self, pipeline_args: dict[str, Any], audio_transcription: dict[str, Any]
+    ) -> None:
         """Test template vars ignores extra fields."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         transcription = {**audio_transcription, "extra": "ignored"}
@@ -778,7 +827,7 @@ Operator: Hello"""
         assert vars["transcription"] == audio_transcription["transcription"]
         assert len(vars["identifier"]) == UUID_SHORT_LENGTH
 
-    def test_generate_identifier(self, pipeline_args):
+    def test_generate_identifier(self, pipeline_args: dict[str, Any]) -> None:
         """Test unique identifier generation."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         id1 = pipeline._generate_identifier()
@@ -787,9 +836,10 @@ Operator: Hello"""
         assert len(id2) == UUID_SHORT_LENGTH
         assert id1 != id2  # Verify uniqueness
 
+    @pytest.mark.usefixtures("mock_lwe_setup")
     def test_get_request_overrides_basic(
-        self, pipeline_args, audio_transcription, mock_lwe_setup
-    ):
+        self, pipeline_args: dict[str, Any], audio_transcription: dict[str, Any]
+    ) -> None:
         """Test basic request overrides without fallback."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         pipeline._initialize_worker()
@@ -800,13 +850,13 @@ Operator: Hello"""
         assert "files" in overrides["request_overrides"]
         assert overrides["request_overrides"]["preset"] == LWE_DEFAULT_PRESET
 
+    @pytest.mark.usefixtures("mock_lwe_setup")
     def test_get_request_overrides_with_fallback(
         self,
-        pipeline_args,
-        audio_transcription,
-        mock_lwe_setup,
-        capsys,
-    ):
+        pipeline_args: dict[str, Any],
+        audio_transcription: dict[str, Any],
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
         """Test request overrides with fallback preset."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         pipeline._initialize_worker()
@@ -822,9 +872,10 @@ Operator: Hello"""
             in captured.err
         )
 
+    @pytest.mark.usefixtures("mock_lwe_setup")
     def test_get_request_overrides_audio_file(
-        self, pipeline_args, audio_transcription, mock_lwe_setup
-    ):
+        self, pipeline_args: dict[str, Any], audio_transcription: dict[str, Any]
+    ) -> None:
         """Test audio file handling in request overrides."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         pipeline._initialize_worker()
@@ -839,9 +890,10 @@ Operator: Hello"""
             "input_audio": {"data": audio_transcription["signed_url"], "format": "wav"},
         }
 
+    @pytest.mark.usefixtures("mock_lwe_setup")
     def test_get_request_overrides_missing_signed_url(
-        self, pipeline_args, audio_transcription, mock_lwe_setup
-    ):
+        self, pipeline_args: dict[str, Any], audio_transcription: dict[str, Any]
+    ) -> None:
         """Reject transcription records that do not include a signed URL."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         pipeline._initialize_worker()
@@ -852,8 +904,12 @@ Operator: Hello"""
 
     @pytest.mark.parametrize("fallback", [False, True])
     def test_audio_format_uses_selected_preset_provider_metadata(
-        self, pipeline_args, audio_transcription, mock_lwe_setup, fallback
-    ):
+        self,
+        pipeline_args: dict[str, Any],
+        audio_transcription: dict[str, Any],
+        mock_lwe_setup: dict[str, Mock],
+        fallback: bool,
+    ) -> None:
         """Both attempts use preset metadata rather than the backend's provider."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         pipeline._initialize_worker()
@@ -878,8 +934,11 @@ Operator: Hello"""
         ]
 
     def test_audio_preset_lookup_failure(
-        self, pipeline_args, audio_transcription, mock_lwe_setup
-    ):
+        self,
+        pipeline_args: dict[str, Any],
+        audio_transcription: dict[str, Any],
+        mock_lwe_setup: dict[str, Mock],
+    ) -> None:
         """Missing presets fail before a model request is submitted."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         pipeline._initialize_worker()
@@ -891,8 +950,11 @@ Operator: Hello"""
         mock_lwe_setup["backend"].run_template.assert_not_called()
 
     def test_missing_signed_url_is_not_a_permanent_transcription_failure(
-        self, pipeline_args, audio_transcription, mock_lwe_setup
-    ):
+        self,
+        pipeline_args: dict[str, Any],
+        audio_transcription: dict[str, Any],
+        mock_lwe_setup: dict[str, Mock],
+    ) -> None:
         """A server rollout mismatch must leave the transcription retryable."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         pipeline._initialize_worker()
@@ -904,10 +966,10 @@ Operator: Hello"""
 
     def test_run_ai_analysis_no_overrides(
         self,
-        pipeline_args,
-        mock_lwe_setup,
-        audio_transcription,
-    ):
+        pipeline_args: dict[str, Any],
+        mock_lwe_setup: dict[str, Mock],
+        audio_transcription: dict[str, Any],
+    ) -> None:
         """Test AI analysis without overrides."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         pipeline._initialize_worker()
@@ -932,10 +994,10 @@ Operator: Hello"""
 
     def test_run_ai_analysis_with_overrides(
         self,
-        pipeline_args,
-        mock_lwe_setup,
-        audio_transcription,
-    ):
+        pipeline_args: dict[str, Any],
+        mock_lwe_setup: dict[str, Mock],
+        audio_transcription: dict[str, Any],
+    ) -> None:
         """Test AI analysis with overrides."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         pipeline._initialize_worker()
@@ -960,11 +1022,11 @@ Operator: Hello"""
     @pytest.mark.usefixtures("mock_lwe_setup")
     def test_empty_transcription_content(
         self,
-        pipeline_args,
-        mock_audio_response,
-        mock_network,
-        audio_transcription,
-    ):
+        pipeline_args: dict[str, Any],
+        mock_audio_response: Mock,
+        mock_network: dict[str, Mock],
+        audio_transcription: dict[str, Any],
+    ) -> None:
         """Test handling of empty transcription content."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         pipeline._initialize_worker()
@@ -981,11 +1043,11 @@ Operator: Hello"""
     @pytest.mark.usefixtures("mock_lwe_setup")
     def test_malformed_transcription(
         self,
-        pipeline_args,
-        mock_audio_response,
-        mock_network,
-        audio_transcription,
-    ):
+        pipeline_args: dict[str, Any],
+        mock_audio_response: Mock,
+        mock_network: dict[str, Mock],
+        audio_transcription: dict[str, Any],
+    ) -> None:
         """Test handling of malformed transcription data."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         pipeline._initialize_worker()
@@ -998,7 +1060,7 @@ Operator: Hello"""
         assert result.success is False
         assert isinstance(result.error, ModelResponseFormattingError)
 
-    def test_merge_srt_content_success(self, pipeline_args):
+    def test_merge_srt_content_success(self, pipeline_args: dict[str, Any]) -> None:
         """Test successful merging of original and AI-labeled SRT content."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
 
@@ -1012,16 +1074,15 @@ Operator: Hello world"""
 
         result = pipeline._merge_srt_content(original_srt, ai_labeled_srt)
         # srt module adds newlines.
-        assert (
-            result
-            == """1
+        assert result == """1
 00:00:01,000 --> 00:00:02,000
 Operator: Hello world
 
 """
-        )
 
-    def test_merge_srt_content_invalid_format(self, pipeline_args):
+    def test_merge_srt_content_invalid_format(
+        self, pipeline_args: dict[str, Any]
+    ) -> None:
         """Test handling of invalid SRT format during merge."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
 
@@ -1029,7 +1090,9 @@ Operator: Hello world
             pipeline._merge_srt_content("invalid srt", "also invalid")
         assert "Invalid SRT format" in str(exc_info.value)
 
-    def test_merge_srt_content_invalid_labels(self, pipeline_args):
+    def test_merge_srt_content_invalid_labels(
+        self, pipeline_args: dict[str, Any]
+    ) -> None:
         """Test handling of invalid speaker labels during merge."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
 
@@ -1045,13 +1108,16 @@ invalid: Hello world"""
             pipeline._merge_srt_content(original_srt, ai_labeled_srt)
         assert "Invalid label" in str(exc_info.value)
 
-    def test_thread_safety(self, pipeline_args):
+    def test_thread_safety(self, pipeline_args: dict[str, Any]) -> None:
         """Test thread-safety of backend access."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
 
         with patch("srt_labeler.pipeline.ApiBackend") as mock_backend_class:
             # Configure the mock to return a new mock instance each time
-            mock_backend_class.side_effect = lambda _: Mock(spec=ApiBackend)
+            def create_backend(_config: Config) -> Mock:
+                return Mock(spec=ApiBackend)
+
+            mock_backend_class.side_effect = create_backend
 
             # Simulate multiple thread initializations
             pipeline._initialize_worker()
@@ -1064,7 +1130,9 @@ invalid: Hello world"""
             assert first_backend is not second_backend
 
     @pytest.mark.usefixtures("mock_lwe_setup")
-    def test_process_transcriptions_empty_list(self, pipeline_args):
+    def test_process_transcriptions_empty_list(
+        self, pipeline_args: dict[str, Any]
+    ) -> None:
         pipeline = SrtLabelerPipeline(**pipeline_args)
 
         # Should handle empty list gracefully
@@ -1075,7 +1143,9 @@ invalid: Hello world"""
             pipeline.process_transcriptions([])
             mock_process.assert_not_called()
 
-    def test_worker_initialization(self, pipeline_args, mock_lwe_setup):
+    def test_worker_initialization(
+        self, pipeline_args: dict[str, Any], mock_lwe_setup: dict[str, Mock]
+    ) -> None:
         pipeline = SrtLabelerPipeline(**pipeline_args)
 
         # Call initializer directly to test backend creation
@@ -1085,13 +1155,13 @@ invalid: Hello world"""
         assert hasattr(pipeline.thread_local, "backend")
         assert pipeline.thread_local.backend == mock_lwe_setup["backend"]
 
-    def test_build_update_url(self, pipeline_args):
+    def test_build_update_url(self, pipeline_args: dict[str, Any]) -> None:
         """Test URL construction for update endpoint."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         expected_url = f"https://{pipeline_args['domain']}/al/transcriptions/update/operator-recording"
         assert pipeline.build_update_url() == expected_url
 
-    def test_api_payload_builder(self, pipeline_args):
+    def test_api_payload_builder(self, pipeline_args: dict[str, Any]) -> None:
         """Test ApiPayloadBuilder functionality."""
         builder = ApiPayloadBuilder(pipeline_args["api_key"])
 
@@ -1118,7 +1188,9 @@ invalid: Hello world"""
         assert metadata["error_stage"] == "labeling"
         assert metadata["error"] == "Test error"
 
-    def test_handle_update_response_success(self, pipeline_args):
+    def test_handle_update_response_success(
+        self, pipeline_args: dict[str, Any]
+    ) -> None:
         """Test successful API response handling."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         mock_response = Mock()
@@ -1127,7 +1199,9 @@ invalid: Hello world"""
         # Should not raise any exceptions
         pipeline._handle_update_response(mock_response)
 
-    def test_handle_update_response_auth_error(self, pipeline_args):
+    def test_handle_update_response_auth_error(
+        self, pipeline_args: dict[str, Any]
+    ) -> None:
         """Test handling of authentication error response."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         mock_response = Mock()
@@ -1142,7 +1216,9 @@ invalid: Hello world"""
             exc_info.value
         )
 
-    def test_handle_update_response_validation_error(self, pipeline_args):
+    def test_handle_update_response_validation_error(
+        self, pipeline_args: dict[str, Any]
+    ) -> None:
         """Test handling of validation error response."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         mock_response = Mock()
@@ -1157,7 +1233,9 @@ invalid: Hello world"""
             exc_info.value
         )
 
-    def test_handle_update_response_invalid_json(self, pipeline_args):
+    def test_handle_update_response_invalid_json(
+        self, pipeline_args: dict[str, Any]
+    ) -> None:
         """Test handling of invalid JSON response."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         mock_response = Mock()
@@ -1167,7 +1245,9 @@ invalid: Hello world"""
             pipeline._handle_update_response(mock_response)
         assert "Invalid JSON response from API" in str(exc_info.value)
 
-    def test_handle_update_response_missing_success(self, pipeline_args):
+    def test_handle_update_response_missing_success(
+        self, pipeline_args: dict[str, Any]
+    ) -> None:
         """Test handling of response missing success field."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         mock_response = Mock()
@@ -1177,7 +1257,9 @@ invalid: Hello world"""
             pipeline._handle_update_response(mock_response)
         assert "Missing success field in API response" in str(exc_info.value)
 
-    def test_execute_update_request_success(self, pipeline_args):
+    def test_execute_update_request_success(
+        self, pipeline_args: dict[str, Any]
+    ) -> None:
         """Test successful execution of update request."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         url = "https://test.com/update"
@@ -1192,7 +1274,9 @@ invalid: Hello world"""
             mock_post.assert_called_once_with(url, payload)
             assert response == mock_response
 
-    def test_execute_update_request_network_error(self, pipeline_args):
+    def test_execute_update_request_network_error(
+        self, pipeline_args: dict[str, Any]
+    ) -> None:
         """Test handling of network errors during update request."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         url = "https://test.com/update"
@@ -1208,7 +1292,9 @@ invalid: Hello world"""
                 exc_info.value
             )
 
-    def test_execute_update_request_timeout(self, pipeline_args):
+    def test_execute_update_request_timeout(
+        self, pipeline_args: dict[str, Any]
+    ) -> None:
         """Test handling of timeout during update request."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         url = "https://test.com/update"
@@ -1224,7 +1310,9 @@ invalid: Hello world"""
                 exc_info.value
             )
 
-    def test_execute_update_request_connection_error(self, pipeline_args):
+    def test_execute_update_request_connection_error(
+        self, pipeline_args: dict[str, Any]
+    ) -> None:
         """Test handling of connection errors during update request."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         url = "https://test.com/update"
@@ -1240,7 +1328,7 @@ invalid: Hello world"""
                 exc_info.value
             )
 
-    def test_update_transcription_success(self, pipeline_args):
+    def test_update_transcription_success(self, pipeline_args: dict[str, Any]) -> None:
         """Test successful transcription update."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         result = TranscriptionResult(
@@ -1260,7 +1348,9 @@ invalid: Hello world"""
             mock_execute.assert_called_once_with(update_url, ANY)
             mock_handle.assert_called_once_with(mock_execute.return_value)
 
-    def test_update_transcription_request_error(self, pipeline_args):
+    def test_update_transcription_request_error(
+        self, pipeline_args: dict[str, Any]
+    ) -> None:
         """Test handling of request error during update."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         result = TranscriptionResult(
@@ -1276,7 +1366,9 @@ invalid: Hello world"""
                 pipeline.update_transcription(result)
             assert "Network error" in str(exc_info.value)
 
-    def test_update_transcription_validation_error(self, pipeline_args):
+    def test_update_transcription_validation_error(
+        self, pipeline_args: dict[str, Any]
+    ) -> None:
         """Test handling of validation error during update."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         result = TranscriptionResult(
@@ -1297,10 +1389,10 @@ invalid: Hello world"""
 
     def test_execute_model_analysis_success(
         self,
-        pipeline_args,
-        mock_lwe_setup,
-        audio_transcription,
-    ):
+        pipeline_args: dict[str, Any],
+        mock_lwe_setup: dict[str, Mock],
+        audio_transcription: dict[str, Any],
+    ) -> None:
         """Test successful model analysis execution."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         pipeline._initialize_worker()
@@ -1334,10 +1426,10 @@ Operator: Hello world
 
     def test_execute_model_analysis_failure(
         self,
-        pipeline_args,
-        mock_lwe_setup,
-        audio_transcription,
-    ):
+        pipeline_args: dict[str, Any],
+        mock_lwe_setup: dict[str, Mock],
+        audio_transcription: dict[str, Any],
+    ) -> None:
         """Test model analysis execution failure."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         pipeline._initialize_worker()
@@ -1363,7 +1455,7 @@ Operator: Hello world
         assert result.transcription_id == audio_transcription["id"]
         assert "Model error" in str(result.error)
 
-    def test_create_model_failure_result(self, pipeline_args):
+    def test_create_model_failure_result(self, pipeline_args: dict[str, Any]) -> None:
         """Test creation of model failure result."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
 
@@ -1379,7 +1471,9 @@ Operator: Hello world
         assert result.success is False
         assert "AI analysis failed" in str(result.error)
 
-    def test_process_model_response_success(self, pipeline_args):
+    def test_process_model_response_success(
+        self, pipeline_args: dict[str, Any]
+    ) -> None:
         """Test successful processing of model response."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         mock_stats = Mock()
@@ -1405,7 +1499,9 @@ Operator: Hello world
         assert result.transcription and "Operator: Hello world" in result.transcription
         mock_stats.log_model_response_error.assert_not_called()
 
-    def test_process_model_response_extraction_error(self, pipeline_args):
+    def test_process_model_response_extraction_error(
+        self, pipeline_args: dict[str, Any]
+    ) -> None:
         """Test handling of transcript extraction error."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         mock_stats = Mock()
@@ -1427,7 +1523,9 @@ Operator: Hello world
             False,
         )
 
-    def test_process_model_response_merge_error(self, pipeline_args):
+    def test_process_model_response_merge_error(
+        self, pipeline_args: dict[str, Any]
+    ) -> None:
         """Test handling of merge error."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         mock_stats = Mock()
@@ -1452,7 +1550,7 @@ invalid
         )
 
     @pytest.mark.usefixtures("mock_lwe_setup")
-    def test_process_transcription_direct(self, pipeline_args):
+    def test_process_transcription_direct(self, pipeline_args: dict[str, Any]) -> None:
         """Test direct processing of a single transcription."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         pipeline._initialize_worker()
@@ -1478,7 +1576,7 @@ invalid
             mock_process.assert_called_once_with(transcription)
             mock_update.assert_called_once_with(mock_result)
 
-    def test_update_transcription_direct(self, pipeline_args):
+    def test_update_transcription_direct(self, pipeline_args: dict[str, Any]) -> None:
         """Test direct update of a transcription result."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         result = TranscriptionResult(
@@ -1499,7 +1597,9 @@ invalid
             mock_execute.assert_called_once()
             mock_handle.assert_called_once()
 
-    def test_attempt_model_processing_direct(self, pipeline_args, audio_transcription):
+    def test_attempt_model_processing_direct(
+        self, pipeline_args: dict[str, Any], audio_transcription: dict[str, Any]
+    ) -> None:
         """Test direct model processing attempt."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
 
@@ -1526,8 +1626,11 @@ invalid
             assert "test error" in str(result.error)
 
     def test_run_model_with_template_direct(
-        self, pipeline_args, mock_lwe_setup, audio_transcription
-    ):
+        self,
+        pipeline_args: dict[str, Any],
+        mock_lwe_setup: dict[str, Mock],
+        audio_transcription: dict[str, Any],
+    ) -> None:
         """Test direct template execution with audio handling."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         pipeline._initialize_worker()
@@ -1565,8 +1668,8 @@ invalid
         ]
 
     def test_process_with_error_handling_direct(
-        self, pipeline_args, audio_transcription
-    ):
+        self, pipeline_args: dict[str, Any], audio_transcription: dict[str, Any]
+    ) -> None:
         """Test direct error handling process."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
 
@@ -1739,7 +1842,7 @@ invalid
             assert isinstance(result.error, Exception)
             assert "final error" in str(result.error)
 
-    def test_determine_final_error_result(self, pipeline_args):
+    def test_determine_final_error_result(self, pipeline_args: dict[str, Any]) -> None:
         """Test determination of final error result under different scenarios."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
 
@@ -1828,7 +1931,9 @@ invalid
             assert result.transcription_id == 123
             assert result.success is False
 
-    def test_update_transcription_auth_error(self, pipeline_args):
+    def test_update_transcription_auth_error(
+        self, pipeline_args: dict[str, Any]
+    ) -> None:
         """Test handling of authentication error during update."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         result = TranscriptionResult(
@@ -1847,7 +1952,7 @@ invalid
                 pipeline.update_transcription(result)
             assert "Invalid API key" in str(exc_info.value)
 
-    def test_stats_increment_primary(self, pipeline_args):
+    def test_stats_increment_primary(self, pipeline_args: dict[str, Any]) -> None:
         """Test that primary model attempts increment primary counter."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         mock_stats = Mock()
@@ -1857,7 +1962,7 @@ invalid
         mock_stats.increment_primary.assert_called_once()
         mock_stats.increment_fallback.assert_not_called()
 
-    def test_stats_increment_fallback(self, pipeline_args):
+    def test_stats_increment_fallback(self, pipeline_args: dict[str, Any]) -> None:
         """Test that fallback model attempts increment fallback counter."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         mock_stats = Mock()
@@ -1867,7 +1972,7 @@ invalid
         mock_stats.increment_fallback.assert_called_once()
         mock_stats.increment_primary.assert_not_called()
 
-    def test_stats_increment_hard_failure(self, pipeline_args):
+    def test_stats_increment_hard_failure(self, pipeline_args: dict[str, Any]) -> None:
         """Test that double hard errors increment hard failure counter."""
         pipeline = SrtLabelerPipeline(**pipeline_args)
         mock_stats = Mock()
@@ -1889,14 +1994,14 @@ invalid
 
 
 class TestRequestError:
-    def test_request_error_initialization(self):
+    def test_request_error_initialization(self) -> None:
         """Test basic RequestError initialization with message."""
         message = "Test request error"
         error = RequestError(message)
         assert str(error) == message
         assert isinstance(error, BaseError)  # Should inherit from BaseError
 
-    def test_request_error_with_cause(self):
+    def test_request_error_with_cause(self) -> None:
         """Test RequestError initialization with cause exception."""
         cause = ValueError("Original error")
         error = RequestError("Request error occurred", cause)
@@ -1904,7 +2009,7 @@ class TestRequestError:
         assert error.__cause__ == cause
         assert isinstance(error, BaseError)
 
-    def test_request_error_inheritance_chain(self):
+    def test_request_error_inheritance_chain(self) -> None:
         """Test that RequestError properly inherits through the chain."""
         error = RequestError("Test error")
         assert isinstance(error, RequestError)
@@ -1916,7 +2021,7 @@ class TestRequestError:
         except BaseError as e:
             assert isinstance(e, RequestError)
 
-    def test_request_error_str_representation(self):
+    def test_request_error_str_representation(self) -> None:
         """Test string representation includes any cause information."""
         cause = ValueError("Root cause")
         error = RequestError("Request error", cause)
@@ -1928,14 +2033,14 @@ class TestRequestError:
 
 
 class TestAuthenticationError:
-    def test_authentication_error_initialization(self):
+    def test_authentication_error_initialization(self) -> None:
         """Test basic AuthenticationError initialization with message."""
         message = "Test authentication error"
         error = AuthenticationError(message)
         assert str(error) == message
         assert isinstance(error, BaseError)
 
-    def test_authentication_error_with_cause(self):
+    def test_authentication_error_with_cause(self) -> None:
         """Test AuthenticationError initialization with cause exception."""
         cause = ValueError("Original error")
         error = AuthenticationError("Auth error occurred", cause)
@@ -1943,7 +2048,7 @@ class TestAuthenticationError:
         assert error.__cause__ == cause
         assert isinstance(error, BaseError)
 
-    def test_authentication_error_inheritance_chain(self):
+    def test_authentication_error_inheritance_chain(self) -> None:
         """Test that AuthenticationError properly inherits through the chain."""
         error = AuthenticationError("Test error")
         assert isinstance(error, AuthenticationError)
@@ -1955,7 +2060,7 @@ class TestAuthenticationError:
         except BaseError as e:
             assert isinstance(e, AuthenticationError)
 
-    def test_authentication_error_str_representation(self):
+    def test_authentication_error_str_representation(self) -> None:
         """Test string representation includes any cause information."""
         cause = ValueError("Root cause")
         error = AuthenticationError("Auth error", cause)
@@ -1967,14 +2072,14 @@ class TestAuthenticationError:
 
 
 class TestResponseValidationError:
-    def test_response_validation_error_initialization(self):
+    def test_response_validation_error_initialization(self) -> None:
         """Test basic ResponseValidationError initialization with message."""
         message = "Test validation error"
         error = ResponseValidationError(message)
         assert str(error) == message
         assert isinstance(error, BaseError)
 
-    def test_response_validation_error_with_cause(self):
+    def test_response_validation_error_with_cause(self) -> None:
         """Test ResponseValidationError initialization with cause exception."""
         cause = ValueError("Original error")
         error = ResponseValidationError("Validation error occurred", cause)
@@ -1982,7 +2087,7 @@ class TestResponseValidationError:
         assert error.__cause__ == cause
         assert isinstance(error, BaseError)
 
-    def test_response_validation_error_inheritance_chain(self):
+    def test_response_validation_error_inheritance_chain(self) -> None:
         """Test that ResponseValidationError properly inherits through the chain."""
         error = ResponseValidationError("Test error")
         assert isinstance(error, ResponseValidationError)
@@ -1994,7 +2099,7 @@ class TestResponseValidationError:
         except BaseError as e:
             assert isinstance(e, ResponseValidationError)
 
-    def test_response_validation_error_str_representation(self):
+    def test_response_validation_error_str_representation(self) -> None:
         """Test string representation includes any cause information."""
         cause = ValueError("Root cause")
         error = ResponseValidationError("Validation error", cause)
@@ -2006,14 +2111,14 @@ class TestResponseValidationError:
 
 
 class TestModelResponseFormattingError:
-    def test_model_response_formatting_error_initialization(self):
+    def test_model_response_formatting_error_initialization(self) -> None:
         """Test basic ModelResponseFormattingError initialization with message."""
         message = "Test model response error"
         error = ModelResponseFormattingError(message)
         assert str(error) == message
         assert isinstance(error, BaseError)
 
-    def test_model_response_formatting_error_with_cause(self):
+    def test_model_response_formatting_error_with_cause(self) -> None:
         """Test ModelResponseFormattingError initialization with cause exception."""
         cause = ValueError("Original error")
         error = ModelResponseFormattingError("Validation error occurred", cause)
@@ -2021,7 +2126,7 @@ class TestModelResponseFormattingError:
         assert error.__cause__ == cause
         assert isinstance(error, BaseError)
 
-    def test_model_response_formatting_error_inheritance_chain(self):
+    def test_model_response_formatting_error_inheritance_chain(self) -> None:
         """Test that ModelResponseFormattingError properly inherits through the chain."""
         error = ModelResponseFormattingError("Test error")
         assert isinstance(error, ModelResponseFormattingError)
@@ -2033,7 +2138,7 @@ class TestModelResponseFormattingError:
         except BaseError as e:
             assert isinstance(e, ModelResponseFormattingError)
 
-    def test_model_response_formatting_error_str_representation(self):
+    def test_model_response_formatting_error_str_representation(self) -> None:
         """Test string representation includes any cause information."""
         cause = ValueError("Root cause")
         error = ModelResponseFormattingError("Validation error", cause)
@@ -2045,14 +2150,14 @@ class TestModelResponseFormattingError:
 
 
 class TestRequestFileNotFoundError:
-    def test_request_file_not_found_error_initialization(self):
+    def test_request_file_not_found_error_initialization(self) -> None:
         """Test basic RequestFileNotFoundError initialization with message."""
         message = "Not found error"
         error = RequestFileNotFoundError(message)
         assert str(error) == message
         assert isinstance(error, BaseError)
 
-    def test_request_file_not_found_error_with_cause(self):
+    def test_request_file_not_found_error_with_cause(self) -> None:
         """Test RequestFileNotFoundError initialization with cause exception."""
         cause = ValueError("Original error")
         error = RequestFileNotFoundError("Not found error occurred", cause)
@@ -2060,7 +2165,7 @@ class TestRequestFileNotFoundError:
         assert error.__cause__ == cause
         assert isinstance(error, BaseError)
 
-    def test_request_file_not_found_error_inheritance_chain(self):
+    def test_request_file_not_found_error_inheritance_chain(self) -> None:
         """Test that RequestFileNotFoundError properly inherits through the chain."""
         error = RequestFileNotFoundError("Test error")
         assert isinstance(error, RequestFileNotFoundError)
@@ -2072,7 +2177,7 @@ class TestRequestFileNotFoundError:
         except BaseError as e:
             assert isinstance(e, RequestFileNotFoundError)
 
-    def test_request_file_not_found_error_str_representation(self):
+    def test_request_file_not_found_error_str_representation(self) -> None:
         """Test string representation includes any cause information."""
         cause = ValueError("Root cause")
         error = RequestFileNotFoundError("Not found error", cause)
@@ -2086,7 +2191,7 @@ class TestRequestFileNotFoundError:
 class TestTranscriptionErrorHandler:
     """Test suite for TranscriptionErrorHandler class."""
 
-    def test_is_hard_error_classification(self):
+    def test_is_hard_error_classification(self) -> None:
         """Test error classification logic."""
         handler = TranscriptionErrorHandler()
 
@@ -2098,14 +2203,14 @@ class TestTranscriptionErrorHandler:
         assert handler.is_hard_error(Exception("test")) is False
         assert handler.is_hard_error(ValueError("test")) is False
 
-    def test_should_update_with_error_both_hard(self):
+    def test_should_update_with_error_both_hard(self) -> None:
         """Test update decision when both errors are hard."""
         handler = TranscriptionErrorHandler()
         primary = SrtMergeError("test")
         fallback = ModelResponseFormattingError("test")
         assert handler.should_update_with_error(primary, fallback) is True
 
-    def test_should_update_with_error_mixed(self):
+    def test_should_update_with_error_mixed(self) -> None:
         """Test update decision with mixed error types."""
         handler = TranscriptionErrorHandler()
 
@@ -2118,7 +2223,7 @@ class TestTranscriptionErrorHandler:
         # One None
         assert handler.should_update_with_error(SrtMergeError("test"), None) is False
 
-    def test_create_error_result(self):
+    def test_create_error_result(self) -> None:
         """Test error result creation."""
         handler = TranscriptionErrorHandler()
         error = Exception("test error")
@@ -2133,40 +2238,40 @@ class TestTranscriptionErrorHandler:
 class TestTranscriptionResult:
     """Test suite for TranscriptionResult class."""
 
-    def test_requires_api_update_success(self):
+    def test_requires_api_update_success(self) -> None:
         """Test requires_api_update property with successful result."""
         result = TranscriptionResult(
             transcription_id=1, success=True, transcription="test"
         )
         assert result.requires_api_update is True
 
-    def test_requires_api_update_transient_error(self):
+    def test_requires_api_update_transient_error(self) -> None:
         """Test requires_api_update property with transient error."""
         result = TranscriptionResult(
             transcription_id=1, success=False, error=Exception("Transient error")
         )
         assert result.requires_api_update is False
 
-    def test_requires_api_update_hard_error(self):
+    def test_requires_api_update_hard_error(self) -> None:
         """Test requires_api_update property with hard error."""
         result = TranscriptionResult(
             transcription_id=1, success=False, error=SrtMergeError("Hard error")
         )
         assert result.requires_api_update is True
 
-    def test_is_hard_error_no_error(self):
+    def test_is_hard_error_no_error(self) -> None:
         """Test is_hard_error with no error."""
         result = TranscriptionResult(transcription_id=1, success=True)
         assert result.is_hard_error() is False
 
-    def test_is_hard_error_transient(self):
+    def test_is_hard_error_transient(self) -> None:
         """Test is_hard_error with transient error."""
         result = TranscriptionResult(
             transcription_id=1, success=False, error=Exception("Transient")
         )
         assert result.is_hard_error() is False
 
-    def test_is_hard_error_hard(self):
+    def test_is_hard_error_hard(self) -> None:
         """Test is_hard_error with hard error types."""
         # Test SrtMergeError
         result = TranscriptionResult(
@@ -2192,16 +2297,18 @@ class TestFallbackResultValidator:
         return SrtMerger()
 
     @pytest.fixture
-    def validator(self, merger):
+    def validator(self, merger: SrtMerger):
         """Fixture providing a configured FallbackResultValidator instance."""
         return FallbackResultValidator(merger)
 
-    def test_initialization(self, merger):
+    def test_initialization(self, merger: SrtMerger) -> None:
         """Test validator initialization with SrtMerger."""
         validator = FallbackResultValidator(merger)
         assert validator.merger == merger
 
-    def test_should_accept_fallback_valid(self, validator):
+    def test_should_accept_fallback_valid(
+        self, validator: FallbackResultValidator
+    ) -> None:
         """Test validation with valid SrtMergeError and valid labels."""
         error = SrtMergeError("test error")
         content = """1
@@ -2210,7 +2317,9 @@ operator: Hello world"""
 
         assert validator.should_accept_fallback(error, content) is True
 
-    def test_should_accept_fallback_invalid_labels(self, validator):
+    def test_should_accept_fallback_invalid_labels(
+        self, validator: FallbackResultValidator
+    ) -> None:
         """Test validation with SrtMergeError but invalid labels."""
         error = SrtMergeError("test error")
         content = """1
@@ -2219,7 +2328,9 @@ invalid: Hello world"""
 
         assert validator.should_accept_fallback(error, content) is False
 
-    def test_should_accept_fallback_wrong_error_type(self, validator):
+    def test_should_accept_fallback_wrong_error_type(
+        self, validator: FallbackResultValidator
+    ) -> None:
         """Test validation with non-SrtMergeError."""
         error = Exception("test error")
         content = """1
@@ -2228,13 +2339,17 @@ operator: Hello world"""
 
         assert validator.should_accept_fallback(error, content) is False
 
-    def test_should_accept_fallback_empty_content(self, validator):
+    def test_should_accept_fallback_empty_content(
+        self, validator: FallbackResultValidator
+    ) -> None:
         """Test validation with empty content."""
         error = SrtMergeError("test error")
         assert validator.should_accept_fallback(error, "") is False
         assert validator.should_accept_fallback(error, None) is False
 
-    def test_should_accept_fallback_invalid_srt(self, validator):
+    def test_should_accept_fallback_invalid_srt(
+        self, validator: FallbackResultValidator
+    ) -> None:
         """Test validation with invalid SRT format."""
         error = SrtMergeError("test error")
         content = "not valid srt content"
@@ -2242,21 +2357,21 @@ operator: Hello world"""
 
 
 class TestBaseError:
-    def test_api_error_initialization(self):
+    def test_api_error_initialization(self) -> None:
         """Test basic BaseError initialization with message."""
         message = "Test API error"
         error = BaseError(message)
         assert str(error) == message
         assert isinstance(error, Exception)
 
-    def test_api_error_with_cause(self):
+    def test_api_error_with_cause(self) -> None:
         """Test BaseError initialization with cause exception."""
         cause = ValueError("Original error")
         error = BaseError("API error occurred", cause)
         assert str(error) == "API error occurred"
         assert error.__cause__ == cause
 
-    def test_api_error_inheritance(self):
+    def test_api_error_inheritance(self) -> None:
         """Test that BaseError properly inherits from Exception."""
         error = BaseError("Test error")
         assert isinstance(error, Exception)
@@ -2266,7 +2381,7 @@ class TestBaseError:
         except Exception as e:
             assert isinstance(e, BaseError)
 
-    def test_api_error_str_representation(self):
+    def test_api_error_str_representation(self) -> None:
         """Test string representation includes any cause information."""
         cause = ValueError("Root cause")
         error = BaseError("API error", cause)
