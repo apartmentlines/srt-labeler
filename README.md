@@ -38,7 +38,7 @@ These can also be provided via command-line arguments.
 The tool uses [LWE](https://github.com/llm-workflow-engine/llm-workflow-engine) (LLM Workflow Engine) with the following preset models:
 
 - qwen3.8-omni-flash-srt-labeler (primary, `chat_openai_compat`)
-- gemini-2.5-pro-srt-labeler (fallback, `chat_google_genai`)
+- gemini-3.8-flash-srt-labeler (fallback, `chat_google_genai`, medium thinking)
 
 And the following prompt templates:
 
