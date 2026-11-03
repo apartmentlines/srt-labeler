@@ -23,7 +23,7 @@ dependencies = [
     "llm-workflow-engine",
     # Disabled, protobuf conflict with langchain-google-genai
     # "lwe-plugin-provider-chat-fireworks @ git+https://github.com/llm-workflow-engine/lwe-plugin-provider-chat-fireworks.git@7e5322b146e09cbaf857f164ceae875d46f7a949",
-    "lwe-plugin-provider-chat-google-genai @ git+https://github.com/llm-workflow-engine/lwe-plugin-provider-chat-google-genai.git@4a9933bcc086c977e658b3451ebaa418bb7f6bd0",
+    "lwe-plugin-provider-chat-google-genai @ git+https://github.com/llm-workflow-engine/lwe-plugin-provider-chat-google-genai.git@4ebe590fe69081f2d3890183bc091196e02ad341",
     "lwe-plugin-provider-openrouter @ git+https://github.com/llm-workflow-engine/lwe-plugin-provider-openrouter.git@4a1e46d10b34b3cf86a1b31ea7335c4f555ad023",
 ]
 
@@ -40,6 +40,7 @@ srt_labeler = [
 [project.scripts]
 srt-merger = "srt_labeler.merger:main"
 srt-pipeline = "srt_labeler.main:main"
+srt-eval = "srt_labeler.local:main"
 
 [project.optional-dependencies]
 dev = [

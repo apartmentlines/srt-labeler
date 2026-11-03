@@ -1,4 +1,6 @@
+.agents/
 *.srt
 stats.db
 build/
+call-data/
 srt_labeler/lwe/data/*

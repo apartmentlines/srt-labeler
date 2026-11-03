@@ -1,8 +1,10 @@
-"""Build signed audio URL attachments for each LWE provider."""
+"""Build remote and local audio attachments for each LWE provider."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
+import base64
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -44,6 +46,33 @@ class AudioAttachmentFactory:
         if parsed.scheme != "https" or not parsed.hostname:
             raise ValueError("Transcription signed_url must be an HTTPS URL")
         return HumanMessage(content=[formatter(signed_url)])
+
+    def create_local(self, provider: str, path: Path) -> HumanMessage:
+        """Encode a local WAV file for Qwen or Google without hosting it.
+
+        :raises ValueError: If the provider or file format is unsupported.
+        :raises OSError: If the audio cannot be read.
+        """
+        if provider not in (
+            "provider_chat_openai_compat",
+            "provider_chat_google_genai",
+        ):
+            raise ValueError(f"No local audio formatter for provider {provider!r}")
+        self.validate_local(path)
+        encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+        if provider == "provider_chat_openai_compat":
+            block = self.openai_audio(f"data:audio/wav;base64,{encoded}")
+        else:
+            block = {"type": "media", "data": encoded, "mime_type": "audio/wav"}
+        return HumanMessage(content=[block])
+
+    @staticmethod
+    def validate_local(path: Path) -> None:
+        """Check the WAV container signature before initializing a model backend."""
+        with path.open("rb") as audio:
+            header = audio.read(12)
+        if len(header) < 12 or header[:4] != b"RIFF" or header[8:12] != b"WAVE":
+            raise ValueError(f"Local audio must be a WAV file: {path}")
 
     @staticmethod
     def openai_audio(signed_url: str) -> dict[str, Any]:

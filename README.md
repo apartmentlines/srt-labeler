@@ -62,6 +62,48 @@ Optional arguments:
 - `--max-id N`: Process transcriptions with ID <= N
 - `--debug`: Enable debug logging
 
+### Local Testing Tool
+
+Run one preset against local SRT and WAV files:
+
+```bash
+srt-eval --srt call.srt --audio call.wav \
+  --preset gemini-3.8-flash-srt-labeler --output-dir runs/first
+```
+
+If omitted, `--preset` uses `LWE_DEFAULT_PRESET` from `srt_labeler/constants.py`,
+the same default as the production pipeline. `srt-eval --help` shows its current
+value. Each invocation uses only the selected preset, with no automatic fallback.
+Audio is sent inline to the
+model provider; provider credentials and network access are still required.
+No ApartmentLines API credentials, retrieval, updates, or production statistics
+are involved. Provider request-size limits still apply to inline audio.
+
+The output directory must be new. It contains:
+
+- `response.txt`: Complete model response text returned by LWE, before transcript
+  extraction or merging. This remains available if extraction or merging fails.
+- `final.srt`: Speaker labels merged into the original SRT using the same merger
+  as production. Written only on success.
+
+Use `--template-file path/to/prompt.md` to try a local LWE/Jinja template without
+editing the bundled prompt, and `--debug` for detailed LWE logging to the console
+and `lwe-debug.log` in the output directory. Templates receive
+the same `transcription` and `identifier` variables as production. Runs reuse
+the bundled LWE configuration and data directories, honoring `LWE_CONFIG_DIR`
+and `LWE_DATA_DIR` when set. Run-specific settings are applied in memory, with
+user creation, user/conversation loading, and chat logging disabled. LWE's normal
+database initialization and schema checks still apply.
+
+Exit status is `0` on success, `1` for execution or processing failures, and `2`
+for invalid CLI arguments. If the provider raises an error before returning a
+response, there is no response file to save. Run multiple pairs or compare
+templates by invoking the command again with a different output directory.
+
+After installing the updated package, `srt-eval` is available alongside
+`srt-pipeline`. From a checkout, `python -m srt_labeler.local` accepts the same
+arguments.
+
 ### Merger Tool
 
 Merge speaker labels from a labeled SRT file into an unlabeled one:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import re
 import tempfile
 import logging
 import json
@@ -17,13 +16,15 @@ from typing import Any
 from types import TracebackType
 from dataclasses import dataclass
 from tenacity import retry, stop_after_attempt, wait_exponential
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage
 import requests
 from .utils import post_request
 from lwe.core.config import Config
 from lwe import ApiBackend
 from .logger import Logger
 from .audio import AudioAttachmentFactory
+from .labeling import LabelingEngine
+from .errors import BaseError, RequestError, ModelResponseFormattingError
 from .merger import SrtMerger, SrtMergeError
 from .constants import (
     LWE_DEFAULT_PRESET,
@@ -172,20 +173,6 @@ class ApiPayloadBuilder:
         return {**base_payload, "metadata": json.dumps(metadata)}
 
 
-class BaseError(Exception):
-    """Base exception class."""
-
-    def __init__(self, message: str, cause: Exception | None = None) -> None:
-        """Initialize API error.
-
-        :param message: Error message
-        :param cause: Optional causing exception
-        """
-        super().__init__(message)
-        if cause:
-            self.__cause__: BaseException | None = cause
-
-
 class AuthenticationError(BaseError):
     """Exception raised for authentication-related errors."""
 
@@ -198,35 +185,11 @@ class AuthenticationError(BaseError):
         super().__init__(message, cause)
 
 
-class RequestError(BaseError):
-    """Exception raised for errors during request construction or execution."""
-
-    def __init__(self, message: str, cause: Exception | None = None) -> None:
-        """Initialize request error.
-
-        :param message: Error message
-        :param cause: Optional causing exception
-        """
-        super().__init__(message, cause)
-
-
 class ResponseValidationError(BaseError):
     """Exception raised for response validation errors."""
 
     def __init__(self, message: str, cause: Exception | None = None) -> None:
         """Initialize response validation error.
-
-        :param message: Error message
-        :param cause: Optional causing exception
-        """
-        super().__init__(message, cause)
-
-
-class ModelResponseFormattingError(BaseError):
-    """Exception raised for model response formatting errors."""
-
-    def __init__(self, message: str, cause: Exception | None = None) -> None:
-        """Initialize model response formatting error.
 
         :param message: Error message
         :param cause: Optional causing exception
@@ -342,17 +305,7 @@ class SrtLabelerPipeline:
         :return: Extracted transcript content
         :raises Exception: If transcript section not found
         """
-        self.log.debug("Attempting to extract transcript section from response")
-        if not response:
-            raise ModelResponseFormattingError("No response provided")
-        match = re.search(r"<transcript>(.*?)</transcript>", response, re.DOTALL)
-        if not match:
-            raise ModelResponseFormattingError(
-                "No transcript section found in the text"
-            )
-        extracted = match.group(1).strip()
-        self.log.debug("Successfully extracted transcript section")
-        return extracted
+        return LabelingEngine.extract_transcript(response)
 
     def _generate_identifier(self) -> str:
         """Generate a short unique identifier.
@@ -438,28 +391,9 @@ class SrtLabelerPipeline:
         :return: Provider-specific audio attachment.
         :raises RequestError: If the preset or audio attachment is invalid.
         """
-        success, preset, message = (
-            self.thread_local.backend.preset_manager.ensure_preset(preset_name)
-        )
-        if not success:
-            raise RequestError(f"Cannot load audio preset {preset_name!r}: {message}")
-        metadata, _customizations = preset
-        provider = metadata.get("provider")
-        if not isinstance(provider, str) or not provider:
-            raise RequestError(f"Preset {preset_name!r} has no provider")
-        provider = self.thread_local.backend.provider_manager.full_name(provider)
-        self.log.debug(
-            "Formatting audio for transcription %s using preset %s, provider %s",
-            transcription["id"],
-            preset_name,
-            provider,
-        )
-        try:
-            return self.audio_attachments.create(
-                provider, transcription.get("signed_url", "")
-            )
-        except ValueError as error:
-            raise RequestError(str(error), cause=error) from error
+        return LabelingEngine(
+            self.thread_local.backend, self.audio_attachments
+        ).audio_attachment(preset_name, transcription.get("signed_url", ""))
 
     def _get_request_overrides(
         self, transcription: dict[str, Any], fallback: bool
@@ -484,25 +418,7 @@ class SrtLabelerPipeline:
         return overrides
 
     def _normalize_model_response(self, content: Any) -> str:
-        if content is None:
-            return ""
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            out = []
-            for part in content:
-                if isinstance(part, str):
-                    out.append(part)
-                elif isinstance(part, dict):
-                    if "text" in part and isinstance(part["text"], str):
-                        out.append(part["text"])
-                    else:
-                        pass
-                else:
-                    pass
-            return "\n".join(out).strip()
-        # unknown scalar (e.g., pydantic model, tool result wrapper)
-        return str(content).strip()
+        return LabelingEngine.normalize_response(content)
 
     def _run_ai_analysis(
         self, template_vars: dict[str, Any], overrides: dict[str, Any] | None = None
@@ -513,19 +429,9 @@ class SrtLabelerPipeline:
         :param overrides: Optional override settings
         :return: Tuple of (success, response, error)
         """
-        self.log.debug("Running AI analysis with template")
-        success, response, _user_message = self.thread_local.backend.run_template(
-            LWE_TRANSCRIPTION_TEMPLATE,
-            template_vars=template_vars,
-            overrides=overrides,
+        return LabelingEngine(self.thread_local.backend).run_template(
+            LWE_TRANSCRIPTION_TEMPLATE, template_vars, overrides
         )
-        self.log.debug(f"AI analysis completed with success: {success}")
-        # NOTE: This is a workaround for the fact that under certain circumstances,
-        # the LWE backend returns an AIMessage object instead of a string.
-        if type(response) is AIMessage:  # pyright: ignore[reportUnnecessaryComparison]
-            response = str(response.content)
-        response: str = self._normalize_model_response(response)
-        return success, response, _user_message
 
     def _merge_srt_content(self, original_srt: str, ai_labeled_srt: str) -> str:
         """Merge original SRT with AI-labeled content.

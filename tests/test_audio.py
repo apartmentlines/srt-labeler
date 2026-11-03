@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import base64
+from pathlib import Path
 from typing import Any
+import wave
 
 import pytest
 
@@ -64,3 +67,43 @@ class TestAudioAttachmentFactory:
         assert message.content == [
             {"type": "audio", "url": "https://example.com/a.wav"}
         ]
+
+    @pytest.mark.parametrize(
+        "provider", ["provider_chat_openai_compat", "provider_chat_google_genai"]
+    )
+    def test_local_audio_preserves_wav_bytes(
+        self, tmp_path: Path, provider: str
+    ) -> None:
+        path = tmp_path / "recording.wav"
+        with wave.open(str(path), "wb") as audio:
+            audio.setnchannels(1)
+            audio.setsampwidth(2)
+            audio.setframerate(8000)
+            audio.writeframes(b"\x00\x00" * 80)
+        message = AudioAttachmentFactory().create_local(provider, path)
+        block = message.content[0]
+        assert isinstance(block, dict)
+        if provider == "provider_chat_openai_compat":
+            assert block["type"] == "input_audio"
+            assert block["input_audio"]["format"] == "wav"
+            data = block["input_audio"]["data"]
+            assert data.startswith("data:audio/wav;base64,")
+            encoded = data.split(",", 1)[1]
+        else:
+            assert block["type"] == "media"
+            assert block["mime_type"] == "audio/wav"
+            assert "file_uri" not in block
+            encoded = block["data"]
+        assert base64.b64decode(encoded) == path.read_bytes()
+
+    def test_local_audio_rejects_unsupported_provider(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="No local audio formatter"):
+            AudioAttachmentFactory().create_local(
+                "provider_openrouter", tmp_path / "a.wav"
+            )
+
+    def test_local_audio_rejects_invalid_wav(self, tmp_path: Path) -> None:
+        path = tmp_path / "audio.wav"
+        path.write_bytes(b"not really a WAV")
+        with pytest.raises(ValueError, match="WAV"):
+            AudioAttachmentFactory().create_local("provider_chat_google_genai", path)
