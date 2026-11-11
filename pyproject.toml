@@ -38,6 +38,7 @@ namespaces = false
 
 [tool.setuptools.package-data]
 srt_labeler = [
+    "review_assets/*",
     "lwe/config/profiles/default/config.yaml",
     "lwe/config/profiles/default/presets/*.yaml",
     "lwe/config/profiles/default/templates/*.md",

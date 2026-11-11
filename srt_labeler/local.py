@@ -21,6 +21,7 @@ from .constants import LWE_DEFAULT_PRESET, LWE_TRANSCRIPTION_TEMPLATE, UUID_SHOR
 from .labeling import LabelingEngine
 from .logger import Logger
 from .merger import SrtMerger
+from .token_usage import TokenUsage
 
 
 class LocalLabeler:
@@ -66,14 +67,16 @@ class LocalLabeler:
             template_file.name if template_file else LWE_TRANSCRIPTION_TEMPLATE
         )
         self.log.info(f"Running preset {preset} with template {template_name}")
-        success, response, error = engine.run_template(
-            template_name,
-            {
-                "transcription": transcription,
-                "identifier": str(uuid.uuid4())[:UUID_SHORT_LENGTH],
-            },
-            {"request_overrides": {"preset": preset, "files": [attachment]}},
-        )
+        with TokenUsage.capture(output_dir / "usage.json") as usage:
+            success, response, error = engine.run_template(
+                template_name,
+                {
+                    "transcription": transcription,
+                    "identifier": str(uuid.uuid4())[:UUID_SHORT_LENGTH],
+                },
+                {"request_overrides": {"preset": preset, "files": [attachment]}},
+                usage=usage,
+            )
         response_path = output_dir / "response.txt"
         response_path.write_text(response, encoding="utf-8")
         self.log.info(f"Saved model response to {response_path}")

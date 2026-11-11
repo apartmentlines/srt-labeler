@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import json
 from pathlib import Path
 from unittest.mock import Mock
 import wave
@@ -88,6 +89,27 @@ def backend() -> Mock:
 
 class TestLocalLabeler:
     """Verify artifacts, configuration, and failure boundaries."""
+
+    def test_usage_survives_invalid_model_output(
+        self, inputs: tuple[Path, Path, Path], backend: Mock
+    ) -> None:
+        backend.run_template.return_value = (
+            True,
+            AIMessage(
+                content="Missing transcript tags",
+                usage_metadata={
+                    "input_tokens": 100,
+                    "output_tokens": 12,
+                    "total_tokens": 112,
+                },
+            ),
+            None,
+        )
+        with pytest.raises(ModelResponseFormattingError):
+            LocalLabeler(Mock(return_value=backend)).run(*inputs)
+        usage = json.loads((inputs[2] / "usage.json").read_text())
+        assert usage["summary"]["metrics"]["input_tokens"]["total"] == 100
+        assert (inputs[2] / "response.txt").read_text() == "Missing transcript tags"
 
     def test_debug_saves_execution_diagnostics(
         self,
@@ -195,7 +217,9 @@ class TestLocalLabeler:
         backend.run_template.side_effect = RuntimeError("Connection failed")
         with pytest.raises(RuntimeError, match="Connection failed"):
             LocalLabeler(Mock(return_value=backend)).run(*inputs)
-        assert list(inputs[2].iterdir()) == []
+        assert [path.name for path in inputs[2].iterdir()] == ["usage.json"]
+        usage = json.loads((inputs[2] / "usage.json").read_text())
+        assert usage["summary"]["metrics"]["input_tokens"]["total"] is None
         backend.run_template.assert_called_once()
 
     def test_ai_message_text_blocks_are_extracted(

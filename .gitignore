@@ -1,4 +1,8 @@
-.agents/
+.agents/*
+!.agents/skills/
+.agents/skills/*
+!.agents/skills/evaluate-srt-presets/
+!.agents/skills/compose-srt-review/
 *.srt
 stats.db
 build/

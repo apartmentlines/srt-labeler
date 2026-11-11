@@ -11,6 +11,7 @@ from lwe import ApiBackend
 
 from .audio import AudioAttachmentFactory
 from .errors import ModelResponseFormattingError, RequestError
+from .token_usage import TokenUsage
 
 
 class LabelingEngine:
@@ -53,11 +54,14 @@ class LabelingEngine:
         template_name: str,
         template_vars: dict[str, Any],
         overrides: dict[str, Any] | None = None,
+        usage: TokenUsage | None = None,
     ) -> tuple[bool, str, str | None]:
         """Return complete response text before transcript extraction or merging."""
         success, response, message = self.backend.run_template(
             template_name, template_vars=template_vars, overrides=overrides
         )
+        if usage is not None:
+            usage.fallback(response)
         return success, self.normalize_response(response), message
 
     @staticmethod
