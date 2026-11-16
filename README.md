@@ -150,6 +150,27 @@ Run the test suite:
 pytest
 ```
 
+The explicitly invoked `$compose-srt-review` and `$evaluate-srt-presets` skills
+under `.agents/skills/` operate the portable listening-review and evaluation
+framework. They document versioned human-reviewed corpora, feedback reconciliation,
+recoverable experiments and saved-output rescoring. Follow their shared
+[framework contract](.agents/skills/evaluate-srt-presets/contracts.md).
+
+Command discovery:
+
+```bash
+python .agents/skills/compose-srt-review/scripts/compose.py --help
+python .agents/skills/evaluate-srt-presets/scripts/corpus.py --help
+python .agents/skills/evaluate-srt-presets/scripts/review_feedback.py --help
+python .agents/skills/evaluate-srt-presets/scripts/experiment.py --help
+python .agents/skills/evaluate-srt-presets/scripts/matrix.py --help
+```
+
+Offline tests use fixtures and fake providers. Preparing a framework or report
+does not make provider requests; live collection requires explicitly scoped
+authorization. Corpora, saved runs, and review packages live under the ignored
+private `call-data/` directory. Rescoring writes a new evaluation.
+
 ## Architecture
 
 Key components:

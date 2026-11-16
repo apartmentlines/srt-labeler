@@ -1,25 +1,46 @@
-# Portable dataset manifest
+# Review inputs
 
-JSON schema version 1; all paths resolve relative to the manifest, not the working directory. Paths may reference files outside its directory. Call IDs must be unique case-insensitively, 1–31 ASCII letters/digits/underscores/hyphens (also safe worksheet names).
+Compose from a corpus following the shared [contract](../evaluate-srt-presets/contracts.md#case-authority).
+Rendering preserves its decisions, evidence, and approval state.
+
+To assemble new cases, supply a JSON selection of input files:
 
 ```json
 {
-  "schema_version": 1,
   "cases": [{
     "id": "call-001",
     "source": "srt/call-001.srt",
-    "reference": "reference-srt/call-001.srt",
+    "draft": "drafts/call-001.srt",
     "audio": "audio/call-001.wav",
     "split": "development",
-    "excluded": {"18": "mixed speakers"},
     "flagged": [18],
     "full_review": true
   }]
 }
 ```
 
-`source`, `reference`, `audio`, and `id` are required for evaluation. `split`, `excluded`, `flagged`, and `full_review` default to empty/false. `excluded` maps original block indexes to nonempty reasons. `flagged` controls review highlighting, not scoring. `full_review` requests a whole-call listen, even with no highlighted blocks. Optional `hashes` maps source/reference/audio to SHA-256 hex strings; a mismatch aborts before requests.
+```sh
+python .agents/skills/evaluate-srt-presets/scripts/corpus.py create \
+  --inputs path/to/selection.json --corpus-id PROJECT \
+  --output call-data/corpora/new-review
+```
 
-Each nonempty SRT must have increasing unique positive block indexes and positive durations; reference blocks must match source text/times/indexes exactly after removing one `Operator: ` or `Caller: ` prefix. Audio must be a readable WAV covering all subtitle endpoints. Use the reference data as immutable input. Keep workbook notes and human decisions in the original dataset's audit trail.
+Paths resolve relative to the selection file. `draft` is labeled SRT awaiting
+human review. `source` may be omitted; creation then removes exactly one
+Operator/Caller prefix to derive the unlabeled text. Supplying the original
+source verifies text, index, and timestamp preservation.
 
-For the composer, `reference` means the first-draft labeled SRT, not an approved reference. `source` can be omitted; the composer derives a temporary unlabeled copy by removing exactly one supported role prefix. If provided, it is used to verify the draft preserved original text and timing. `excluded` has no effect on review highlighting. Every call is included, even with an empty `flagged` list.
+IDs are unique case-insensitively and contain 1–31 ASCII letters, digits,
+underscores or hyphens. `_review_metadata` is reserved for workbook identity.
+SRT indexes must be increasing, positive, and unique; durations must be positive.
+WAV audio must cover all subtitle endpoints.
+
+`flagged` selects highlighted blocks and defaults to empty; `full_review`
+requests a whole-call listen and defaults to false. Include zero-flag calls.
+Optional `record_id` preserves an upstream identifier; `holdout_exposed` records
+whether a case has participated in model comparisons (true, false, or null).
+
+Creation freezes source/audio/draft bytes and records unapproved decisions for
+every block. Compose using the resulting `dataset.json`. The generated
+`review.json` binds browser and workbook feedback to that corpus; reconciliation
+applies accepted feedback to a new revision.

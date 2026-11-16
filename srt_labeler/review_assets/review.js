@@ -59,6 +59,7 @@
     if (selected) selected.classList.remove("selected");
     selected = block;
     selected.classList.add("selected");
+    document.dispatchEvent(new CustomEvent("srt-block-selected", {detail: block.dataset.noteId}));
     document.querySelector("#selected-id").textContent = block.dataset.noteId;
     document.querySelector("#mobile-id").textContent = block.dataset.noteId;
     document.querySelector("#selected-time").textContent = `${timestamp(Number(block.dataset.start))} – ${timestamp(Number(block.dataset.end))}`;
@@ -168,5 +169,9 @@
     button.addEventListener("click", () => document.getElementById(button.dataset.forward).click());
   }
   window.addEventListener("hashchange", fromHash);
+  document.querySelector("#review-selected").addEventListener("click", () => {
+    document.querySelector("#decision").scrollIntoView({behavior: "smooth", block: "center"});
+    document.querySelector("#decision").focus({preventScroll: true});
+  });
   fromHash();
 })();

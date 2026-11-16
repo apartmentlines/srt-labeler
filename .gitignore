@@ -6,5 +6,6 @@
 *.srt
 stats.db
 build/
+.playwright-cli/
 call-data/
 srt_labeler/lwe/data/*

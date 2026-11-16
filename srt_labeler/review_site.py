@@ -12,7 +12,7 @@ import shutil
 from typing import Any
 import zipfile
 import wave
-import tempfile
+import uuid
 
 import srt
 
@@ -26,27 +26,11 @@ LOGGER = logging.getLogger("review_site")
 class ReviewSiteBuilder:
     """Render grouped speaker paragraphs and package the required local audio."""
 
-    @staticmethod
-    def prepare(path: Path, temporary: Path) -> Dataset:
-        """Allow labeled drafts and audio alone, validating optional original SRTs."""
-        data = json.loads(path.read_text())
-        for number, row in enumerate(data["cases"]):
-            for key in ("source", "reference", "audio"):
-                if key in row:
-                    row[key] = str((path.resolve().parent / row[key]).resolve())
-            if "source" not in row:
-                blocks = subtitles(Path(row["reference"]))
-                for block in blocks:
-                    block.content = speaker(block)[1]
-                source = temporary / f"source-{number}.srt"
-                source.write_text(srt.compose(blocks))
-                row["source"] = str(source)
-        manifest = temporary / "dataset.json"
-        manifest.write_text(json.dumps(data))
-        return Dataset(manifest)
-
     def __init__(self, dataset: Dataset, output: Path) -> None:
         self.output: Path = output.resolve()
+        self.dataset: Dataset = dataset
+        self.rows: dict[str, Any] = {row["id"]: row for row in dataset.data["cases"]}
+        self.feedback: dict[str, Any] = {}
         self.decisions: dict[str, list[dict[str, Any]]] = {}
         self.calls: list[dict[str, str]] = []
         for case in dataset.cases:
@@ -69,7 +53,7 @@ class ReviewSiteBuilder:
             self.calls.append(
                 {
                     "recording_id": case.id,
-                    "record_id": case.id,
+                    "record_id": case.record_id or case.id,
                     "srt_path": str(case.source.resolve()),
                     "reference_path": str(case.reference.resolve()),
                     "audio_path": str(case.audio.resolve()),
@@ -102,8 +86,10 @@ class ReviewSiteBuilder:
         return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{escape(title)} · Call review</title><link rel="icon" href="{prefix}assets/icon.svg" type="image/svg+xml"><link rel="stylesheet" href="{prefix}assets/style.css">
+<script src="{prefix}assets/review-data.js" defer></script>
+<script src="{prefix}assets/feedback.js" defer></script>
 <script src="{prefix}assets/review.js" defer></script></head>
-<body><main class="wrap">{body}</main></body></html>
+<body>{ReviewSiteBuilder.feedback_controls(prefix)}<main class="wrap">{body}</main></body></html>
 """
 
     def full_review(self, recording_id: str) -> bool:
@@ -130,13 +116,13 @@ class ReviewSiteBuilder:
         body = f"""<header><p class="eyebrow">Listening review</p><h1>Who is speaking?</h1>
 <p class="muted">{len(self.calls)} calls · {self.total} highlighted blocks to check</p></header>
 <section class="card instructions" aria-labelledby="instructions"><h2 id="instructions">Your review</h2>
-<p><strong>Listen here and record your findings in the spreadsheet.</strong> Use the sheet named for the call and the row matching its block ID. Yellow rows match the highlighted blocks here.</p>
+<p><strong>Listen, choose a decision, and mark each checked block complete.</strong> Your work stays in this browser until you download and return your feedback.</p>
 <ol><li>Listen to the beginning to learn the voices. <strong>Operator</strong> is the answering-service side. <strong>Caller</strong> is the person who placed the call, even if they work for the property.</li>
 <li>Check every <span class="highlight">highlighted block</span> using <strong>Play block</strong> or <strong>Play with context</strong>. Listen through the whole call when requested.</li>
-<li>Choose a <strong>Decision</strong>: <strong>Correct</strong> if the shown label is right, otherwise <strong>Operator</strong> or <strong>Caller</strong>. Use <strong>Both speakers</strong>, <strong>No speech</strong>, or <strong>Unsure</strong> when needed. For both speakers, explain who says which words in <strong>Notes</strong>. Blank means unreviewed.</li>
-<li>If an <strong>unmarked block</strong> has the wrong speaker label, record your decision in that block’s spreadsheet row too.</li></ol>
-<p>Save and return the completed spreadsheet.</p>
-<a class="button primary" href="review-notes.xlsx" download="review-notes.xlsx">Download review spreadsheet</a></section>
+<li>Choose <strong>Correct</strong> if the shown label is right, otherwise <strong>Operator</strong> or <strong>Caller</strong>. Use <strong>Both speakers</strong>, <strong>No speech</strong>, or <strong>Unsure</strong> when needed. Explain shared speech in Notes. Viewing a block does not complete it.</li>
+<li>Check unmarked blocks too when a whole-call listen is requested. Leave unchecked blocks untouched.</li></ol>
+<p>Download feedback at any time, including unfinished work. Import it here to resume in another browser. Return the JSON feedback file when finished. Browser data can be cleared; keep an exported copy.</p>
+</section>
 <section aria-labelledby="calls"><h2 id="calls">Calls to review</h2><div class="call-list">{''.join(cards)}</div></section>"""
         (self.output / "index.html").write_text(self.document("Calls to review", body))
 
@@ -197,6 +183,11 @@ class ReviewSiteBuilder:
                     "label_shown": label,
                     "requires_review": bool(flag),
                     "source_srt_sha256": row["srt_sha256"],
+                    "case_revision": self.rows[rid].get("revision", 1),
+                    "audio_sha256": row["audio_sha256"],
+                    "reference_sha256": hashlib.sha256(
+                        Path(row["reference_path"]).read_bytes()
+                    ).hexdigest(),
                 }
             )
             block = f"""<span class="block{flag}" id="{block_id}" data-index="{index}" data-note-id="{note_id}" data-start="{start}" data-end="{end}"><a class="block-id" href="#{block_id}" aria-label="Select {note_id}, {self.clock(start)} to {self.clock(end)}" title="{note_id} · {self.clock(start)}–{self.clock(end)}">{block_id}</a><span class="words">{escape(source_block.content)}</span></span>"""
@@ -235,7 +226,7 @@ class ReviewSiteBuilder:
         body = f"""<nav class="page-nav" aria-label="Call navigation">{''.join(navigation)}</nav>
 <header><p class="eyebrow">Call {position + 1} of {len(self.calls)}</p><h1>Call {rid}</h1>
 <p class="muted">{len(targets)} {'block' if len(targets) == 1 else 'blocks'} to check · {self.clock(float(row['audio_seconds']))} audio</p></header>
-<p>Use spreadsheet sheet <strong>{rid}</strong> and the matching block row for your Decision and Notes. Record speaker-label errors in unmarked blocks too.</p>
+<p>Select a block, listen, and record your decision below the audio player. Labels shown here are the frozen presentation.</p>
 {notice}<div class="layout"><aside class="card player" aria-label="Audio and block controls"><h2>Listen</h2>
 <audio controls preload="metadata" src="../audio/{rid}.wav" aria-label="Full audio for call {rid}"></audio>
 <div class="js-only"><p class="count" id="review-position"></p><div class="selected-id" id="selected-id">{first}</div><div class="time" id="selected-time"></div>
@@ -243,14 +234,22 @@ class ReviewSiteBuilder:
 <div class="actions"><button id="previous-block">← Previous</button><button id="next-block">Next →</button><button id="copy-id">Copy ID</button></div>
 <div class="speed"><label for="speed">Speed</label><select id="speed"><option value="0.75">0.75×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option></select></div>
 <div class="actions"><button id="play-call">Play full call from start</button></div><p class="status" id="playback-status" role="status" aria-live="polite">Select a block marker, then press Play.</p></div>
-<p><a href="../audio/{rid}.wav" download="{rid}.wav">Download audio</a></p><p><a href="../review-notes.xlsx" download="review-notes.xlsx">Download review spreadsheet</a></p>
-<p class="count">Choose Correct if the label is right. For Both speakers, explain who says which words in Notes. Blank means unreviewed.</p>
+<button id="review-selected" type="button">Review selected block</button>
+<section class="feedback-editor" aria-label="Selected block review">
+<h2>Review this block</h2><p id="edit-block-id" class="count"></p>
+<label for="decision">Decision</label><select id="decision"><option value="">Choose after listening</option><option>Correct</option><option>Operator</option><option>Caller</option><option>Both speakers</option><option>No speech</option><option>Unsure</option></select>
+<label for="notes">Notes</label><textarea id="notes" rows="3"></textarea>
+<label class="completion"><input type="checkbox" id="completed"> I have reviewed this block</label>
+<p id="block-review-state" role="status"></p></section>
+<p><a href="../audio/{rid}.wav" download="{rid}.wav">Download audio</a></p>
+<p class="count">For Both speakers, explain who says which words in Notes. Download your feedback before leaving.</p>
 <noscript><p>Enable JavaScript for block playback. You can still listen with the audio player and use the block identifiers below.</p></noscript></aside>
 <section class="card transcript" aria-labelledby="transcript"><h2 id="transcript">Conversation</h2>
 <p class="legend"><span class="highlight">Highlighted passages</span> need review. Click any block marker to select its audio. Labels shown here may be wrong.</p>
 <nav class="review-links" aria-label="Blocks to review">{links}</nav>{transcript}</section></div>
 <aside class="mobile-controls" aria-label="Selected block playback"><strong id="mobile-id">{first}</strong>
 <div class="actions"><button class="primary" data-forward="play-block">Play block</button><button data-forward="play-context">With context</button><button data-forward="copy-id">Copy ID</button></div>
+<button data-forward="review-selected">Review selected block</button>
 <div class="actions"><button data-forward="previous-block">← Previous</button><button data-forward="next-block">Next →</button><button data-forward="pause-audio">Pause</button></div></aside>"""
         (self.output / "calls" / f"{rid}.html").write_text(
             self.document(f"Call {rid}", body, "../")
@@ -258,7 +257,100 @@ class ReviewSiteBuilder:
 
     def notes(self) -> None:
         """Generate the review workbook from the exact rendered block map."""
-        ReviewWorkbook().write(self.output / "review-notes.xlsx", self.mapping)
+        ReviewWorkbook().write(
+            self.output / "review-notes.xlsx", self.mapping, self.feedback
+        )
+
+    @staticmethod
+    def feedback_controls(prefix: str = "") -> str:
+        """Keep review identity and file actions in a compact persistent header."""
+        return f"""<header class="review-header" aria-label="Review workspace">
+<div class="review-header-inner"><div class="review-toolbar">
+<a class="review-brand" href="{prefix}index.html">Call review</a>
+<div class="reviewer-field"><label for="reviewer">Name</label><input id="reviewer" placeholder="Your name" autocomplete="name"></div>
+<button class="primary" id="export-feedback" type="button">Download feedback</button>
+<details id="feedback-menu"><summary>Files</summary><div class="file-menu">
+<button id="resume-feedback" type="button">Resume from feedback file…</button>
+<button id="new-session" type="button">Keep as separate draft</button>
+</div></details>
+<input id="import-feedback" type="file" accept=".json,application/json" hidden aria-label="Import feedback JSON">
+</div><div class="review-status"><p id="review-progress"></p>
+<p id="save-status" role="status" aria-live="polite">Opening saved draft…</p>
+</div></div></header>"""
+
+    def review_manifest(self) -> None:
+        """Bind all feedback to the exact corpus and presentation revisions."""
+        data = self.dataset.data
+        base = {
+            "corpus_id": data["corpus_id"],
+            "corpus_revision": data["revision"],
+            "corpus_sha256": data["content_sha256"],
+            "run_id": None,
+            "evaluation_id": None,
+        }
+        review = {"schema_version": 1, "base": base, "blocks": self.mapping}
+        base["review_id"] = hashlib.sha256(
+            json.dumps(review, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        self.feedback = {
+            "schema_version": 1,
+            "kind": "srt-review-feedback",
+            "base": base,
+            "session": str(uuid.uuid4()),
+            "reviewer": None,
+            "edit_revision": 0,
+            "updated_at": None,
+            "entries": [
+                {
+                    "identifier": b["identifier"],
+                    "case_revision": b["case_revision"],
+                    "decision": "",
+                    "notes": "",
+                    "state": "untouched",
+                }
+                for b in self.mapping
+            ],
+        }
+        (self.output / "review.json").write_text(
+            json.dumps(review, indent=2), encoding="utf-8"
+        )
+        encoded = (
+            json.dumps({"review": review, "feedback": self.feedback})
+            .replace("<", "\\u003c")
+            .replace(">", "\\u003e")
+            .replace("&", "\\u0026")
+        )
+        (self.output / "assets/review-data.js").write_text(
+            "window.SRT_REVIEW = " + encoded + ";\n", encoding="utf-8"
+        )
+        self.copy_corpus()
+
+    def copy_corpus(self) -> None:
+        """Bundle only corpus artifacts, not unrelated files beside a manifest."""
+        data = json.loads(json.dumps(self.dataset.data))
+        folder = self.output / "corpus"
+        folder.mkdir()
+        for case, row in zip(self.dataset.cases, data["cases"]):
+            destination = folder / case.id
+            destination.mkdir()
+            for key in ("source", "reference", "audio"):
+                source = getattr(case, key)
+                name = "audio.wav" if key == "audio" else f"{key}.srt"
+                shutil.copyfile(source, destination / name)
+                row[key] = f"{case.id}/{name}"
+            original = self.dataset.path.parent / case.id / "original-draft.srt"
+            if original.exists():
+                shutil.copyfile(original, destination / "original-draft.srt")
+        for index, artifact in enumerate(data.get("artifacts", [])):
+            source = self.dataset.path.parent / artifact["path"]
+            target = folder / "provenance" / f"{index}-{source.name}"
+            target.parent.mkdir(exist_ok=True)
+            shutil.copyfile(source, target)
+            artifact["path"] = str(target.relative_to(folder))
+        (folder / "dataset.json").write_text(
+            json.dumps(data, indent=2), encoding="utf-8"
+        )
+        Dataset(folder / "dataset.json")
 
     def build(self) -> None:
         """Generate all pages and copy verified audio, then create a portable ZIP."""
@@ -280,13 +372,16 @@ class ReviewSiteBuilder:
             self.call_page(row, position)
             LOGGER.debug("Built call %s", row["recording_id"])
         self.index()
+        self.review_manifest()
         self.notes()
         (self.output / "DEPLOY.txt").write_text(
-            "Copy this entire directory to any webserver subdirectory and open index.html.\nKeep all files and subdirectories together. All links are relative.\nNo build, API, database, CDN or server-side application is required.\nSave and return the completed spreadsheet.\n"
+            "Copy this entire directory to any webserver subdirectory and open index.html.\nKeep all files and subdirectories together. All links are relative.\nNo build, API, database, CDN or server-side application is required.\nReview in the browser and download feedback JSON at any time. Import JSON to resume in another browser.\nBrowser storage is a convenience; keep an exported copy. The workbook is an alternative exchange.\nThe packaged corpus and review.json pin feedback to the exact frozen presentation.\n"
         )
         (self.output / "review-site-map.json").write_text(
             json.dumps(
                 {
+                    "schema_version": 2,
+                    "base": self.feedback["base"],
                     "site_directory": self.output.name,
                     "blocks": self.mapping,
                 },
@@ -324,9 +419,7 @@ def main() -> None:
         format="%(levelname)s: %(message)s",
     )
     try:
-        with tempfile.TemporaryDirectory() as temporary:
-            dataset = ReviewSiteBuilder.prepare(args.dataset, Path(temporary))
-            ReviewSiteBuilder(dataset, args.output).build()
+        ReviewSiteBuilder(Dataset(args.dataset), args.output).build()
     except (OSError, ValueError) as exc:
         LOGGER.error("%s", exc)
         raise SystemExit(1) from exc

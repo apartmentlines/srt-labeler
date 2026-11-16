@@ -1,26 +1,78 @@
 ---
 name: compose-srt-review
-description: Compose a portable static human-review website and Excel decision workbook from draft speaker-labeled SRTs and local WAV recordings, with optional highlighted blocks and whole-call review requests.
+description: Explicitly invoked creation of portable static SRT/audio listening-review packages with in-page decisions, recoverable drafts, JSON feedback, and Excel exchange.
 ---
 
-Use the Python environment with this repository installed, from its root. The deterministic composer is `srt_labeler/review_site.py`; it uses the maintained player/styles in `srt_labeler/review_assets/` and generates the workbook with `srt_labeler/review_workbook.py`. It makes no model requests and publishes nothing.
+# Compose SRT review
 
-## Prepare
+Use only when the developer explicitly invokes `$compose-srt-review`.
+Work from the repository root in its installed Python environment. The existing
+composer is `srt_labeler/review_site.py`, with maintained browser assets in
+`srt_labeler/review_assets/` and XLSX exchange in `srt_labeler/review_workbook.py`.
+Composition makes no provider requests and publishes nothing.
 
-Create a JSON manifest as described in [inputs.md](inputs.md). Decide which blocks need attention using the evidence available: model disagreement, mixed voices, uncertain attribution or a deliberate spot-check. These are review flags, not corrections. Include every call and every block, including calls with no flags. Request a full listen where local checks are insufficient. Do not invent model confidence or silently promote draft labels into verified truth.
+Read [inputs.md](inputs.md) to prepare inputs and the shared
+[framework contracts](../evaluate-srt-presets/contracts.md) for identity,
+feedback, storage recovery and reconciliation.
 
-Preserve the draft labels/text/indexes/timestamps. The reviewer listens on the website and records findings in the workbook; there are no spreadsheet URLs and no transcription-repair task. Operator means the answering-service side, Caller the incoming side even when property staff called. Mixed/no-speech/unsure are review decisions, not new labels for the production labeler.
+## Prepare and compose
 
-## Compose
+Include every call and block, even zero-flag calls. Use evidence such as model
+disagreement, mixed voices, uncertainty or a deliberate spot-check to flag review
+targets. Flags request attention; they are not corrections or model confidence.
+Request a full listen when local checks are insufficient. Preserve the draft's
+labels, text, indexes and timestamps and retain original draft bytes.
+
+Operator means the answering-service side; Caller means the incoming side,
+including property staff who called. Mixed/no-speech/unsure are review classifications,
+not new production SRT labels. This workflow does not repair transcription.
 
 ```sh
-python .agents/skills/compose-srt-review/scripts/compose.py --dataset path/to/review-dataset.json --output call-data/review-package --debug
+python .agents/skills/compose-srt-review/scripts/compose.py \
+  --dataset path/to/review-dataset.json --output call-data/review-package --debug
 ```
 
-The destination and adjacent `.zip` must not already exist. This prevents accidental destruction of completed review notes. A failed build can leave a partial directory; inspect it and use a fresh destination when retrying. The builder never overwrites source data or an earlier package.
+The directory and adjacent ZIP must be new. A failed build may leave partial
+artifacts; inspect them and use a fresh destination. Rendering preserves the
+corpus's approval state.
 
-The output includes grouped speaker paragraphs with stable `CALL-Bnnn` markers, highlighted review blocks, full audio and block/context playback, playback speed, previous/next highlighted blocks, copy-ID controls, mobile controls and downloadable audio. The workbook has one call sheet and every block row, with only Block ID, Decision and Notes, matching highlight colors and decision dropdowns. Static assets and links are relative. The ZIP contains the same complete folder, including workbook and source-to-review map. Serve over HTTP; file:// playback/download behavior varies by browser.
+## Review and recovery
 
-Check generated HTML against the draft, workbook row IDs against `review-site-map.json`, and ZIP entries against the output folder. Preview a flagged call and a zero-flag call, check desktop/mobile playback, context seeking, workbook/audio downloads and escaping of transcript text. Copy the whole directory to any webserver subdirectory; do not embed a deployment URL.
+Reviewers select a block, listen with context, enter a decision/notes beside the
+audio, and explicitly mark the block reviewed. Viewing a block does not approve
+it. Untouched, draft and completed are distinct. Unknown decisions remain uncertain.
+The whole transcript, audio, highlights and original IDs remain available.
+Keep reviewer identity, feedback download, and file recovery in the compact pinned
+header. Per-block decisions and notes stay beside the audio; spreadsheet downloads
+do not belong in the listening interface.
 
-Return the ZIP location. Keep the generated map and original drafts as the frozen review presentation. When the workbook comes back, validate block coverage and interpret blanks according to the reviewer's stated scope. Do not change references as part of composing a review site.
+Browser drafts autosave in IndexedDB when available. Only successful transactions
+show Saved in this browser. Failed storage leaves edits in memory and keeps
+download available. Export JSON at any time, including unfinished work. Import
+that file to resume elsewhere; downloads never clear drafts. Stale identities,
+duplicate entries and conflicting edits must not overwrite existing work. Separate
+draft sessions preserve competing versions.
+
+The blank XLSX is an alternative exchange with protected identity metadata.
+Completed JSON can also be converted to XLSX, and returned XLSX to JSON, using
+the documented `review_feedback.py` commands. Browser draft restoration and
+spreadsheet editing never revise the authoritative corpus. Corpus reconciliation
+belongs to the evaluation skill and requires explicit dispositions.
+
+## Verify and hand off
+
+Check rendered labels/text and block IDs against the source and `review.json`;
+check workbook coverage and ZIP bytes against the folder. Verify a flagged call
+and a zero-flag call where present, context playback, downloads, escaping, review
+completion and draft export/import. For browser acceptance, serve on localhost
+and run `scripts/check-browser.js` through Playwright CLI `run-code` from the
+site index; it uses isolated browser contexts and local fixture feedback.
+
+Serve the completed directory on ordinary static HTTP hosting or localhost.
+Keep bundled relative assets together. No backend, CDN, deployment URL, or
+special feedback-extraction service is required. Direct file:// behavior is not
+part of the delivery contract.
+
+Return the ZIP and directory locations, corpus/presentation identities, verified
+behavior and limitations. Preserve the original package and drafts. Do not
+publish the package or change approved references as part of composition.

@@ -1,46 +1,81 @@
 ---
 name: evaluate-srt-presets
-description: Evaluate SRT speaker-labeling presets against human-reviewed audio/SRT cases, compare prompt versions, and diagnose labeling or structural regressions using the repository local CLI.
+description: Explicitly invoked SRT corpus audits, human-feedback reconciliation, recoverable preset experiments, saved-output rescoring, and regression investigations.
 ---
 
-Use the Python environment with this repository installed. Run commands from the repository root. Implementation lives in `srt_labeler/eval_dataset.py` and `srt_labeler/evaluate.py`; the skill script is a thin entry point. Inputs and outputs remain local except audio and source text sent to the selected model provider during a live run. Rescoring saved predictions makes no provider requests.
+# Evaluate SRT presets
 
-## Prepare the reference set
+Use only when the developer explicitly invokes `$evaluate-srt-presets`.
+Work from the repository root in its installed Python environment. Read
+[contracts.md](contracts.md) for the applicable schema, provenance, recovery,
+metrics, and review-exchange contract. Ordinary operation needs no builder context.
 
-Use the schema in [dataset.md](dataset.md). Preserve original indexes, timestamps and text. Never send reference labels to the model: `source` is unlabeled; `reference` is only for scoring. Do not guess ambiguous labels to enlarge the scoring denominator. Mixed-speaker/no-speech blocks keep a binary compatibility prefix but must be listed in `excluded`. Their content and structure are still validated.
+## Choose the requested operation
 
-The reviewed November 6 dataset can be imported without rewriting any SRTs:
-
-```sh
-python -m srt_labeler.eval_dataset --manifest call-data/prompt-test-set-2026-11-06/manifest.csv --reviews call-data/prompt-test-set-2026-11-06/reference-review.csv --root . --output call-data/evaluation-dataset.json
-```
-
-The importer requires complete human-verified metadata and pins source, reference and audio hashes. That dataset has 24 calls, 783 blocks, 765 eligible blocks and 18 exclusions. Those counts describe this batch, not a requirement for other datasets. Here, blanks in the completed review were explicitly confirmed correct after a full listen. Do not infer that interpretation for another review.
-
-## Run and compare
-
-Choose an explicit preset and exact LWE template file; preserve the original production template. Each experiment gets a new output directory. The harness runs one bounded local CLI process per call sequentially, preserves `response.txt`, `final.srt` and logs, and continues after a failed case. It does not retry or silently switch models. `--debug` enables LWE debug output. Exit 1 indicates at least one failed call or invalid inputs.
+Use the existing application modules in place: `srt_labeler/eval_dataset.py`
+owns case validation and revisions; `srt_labeler/evaluate.py` owns execution and
+scoring; `srt_labeler/local.py` shares the production labeling/merging boundary.
+New testing commands are in this skill's `scripts/` directory:
 
 ```sh
-python .agents/skills/evaluate-srt-presets/scripts/evaluate.py --dataset call-data/evaluation-dataset.json --preset PRESET --template path/to/prompt.md --split development --output call-data/experiments/baseline --debug
-python .agents/skills/evaluate-srt-presets/scripts/evaluate.py --dataset call-data/evaluation-dataset.json --preset PRESET --template path/to/revised-prompt.md --split development --output call-data/experiments/revised --debug
-python -m srt_labeler.evaluate compare call-data/experiments/baseline call-data/experiments/revised
+python .agents/skills/evaluate-srt-presets/scripts/corpus.py --help
+python .agents/skills/evaluate-srt-presets/scripts/review_feedback.py --help
+python .agents/skills/evaluate-srt-presets/scripts/experiment.py --help
+python .agents/skills/evaluate-srt-presets/scripts/matrix.py --help
 ```
 
-Omit `--split` to run the complete set. `--timeout` controls the per-call limit (600 seconds by default). To score existing results, pass `--predictions DIRECTORY` containing `ID/final.srt`; preset/template then describe the claimed origin and are not independently verified. Rescore elapsed time is scoring time, not model latency.
+- **Create/audit:** use `corpus.py create` to assemble draft cases and
+  `corpus.py validate --dataset PATH --require-approved` before evaluation.
+  Inspect audio locators and human provenance, not just schema success.
+- **Feedback:** validate returned JSON/XLSX against its `review.json` and corpus.
+  Interpret comments as proposals, record accept/reject/defer decisions with
+  actor and rationale, then reconcile to a new revision. Unknown reviewer identity
+  stays unknown; an assistant cannot invent human approval. See the feedback
+  contract for the resolutions JSON and exact SHA-256 binding.
+- **Compare:** prepare bounded, frozen runs first; collect only within existing
+  live-call authorization. Use matrix preparation for explicit repetitions and
+  interleaving. Report regressions, failures, coverage and variation alongside gains.
+- **Investigate/rescore:** inspect full saved inputs/outputs and evidence.
+  Corrected references can rescore old outputs with parent lineage. Changed inputs
+  require recollection before claiming new behavioral results.
 
-Read `summary.json`, `results.json`, and `experiment.json`. Accuracy including failures keeps eligible blocks from failed calls in the denominator with zero credit. Also report successful-call accuracy and coverage; never hide failures behind that conditional accuracy. Per-call results include mismatching indexes and a confusion matrix. Structural corruption fails the whole call, including corruption on an excluded block. The macro average weights calls equally; the micro accuracy weights eligible blocks equally. This is a chosen challenge/control set, not a population accuracy estimate. Runtime is wall time including startup. Token counts come only from provider-reported usage; prices and dollar cost are not inferred.
+## Execution and recovery
 
-The experiment snapshots the actual template, input/reference hashes, exclusion policy and resolved preset identity/hash. Compare requires identical ordered cases, hashes and masks. Keep preset settings, split and model fixed when attributing differences to a prompt. A provider alias can change behind an unchanged preset hash; document provider-side versions when known.
+```sh
+python .agents/skills/evaluate-srt-presets/scripts/experiment.py prepare \
+  --dataset path/to/corpus/dataset.json \
+  --preset PRESET --template path/to/prompt.md --split development \
+  --run call-data/experiments/baseline
+python .agents/skills/evaluate-srt-presets/scripts/experiment.py collect \
+  --run call-data/experiments/baseline
+python .agents/skills/evaluate-srt-presets/scripts/experiment.py status \
+  --run call-data/experiments/baseline
+```
 
-Inspect errors and raw outputs, develop a specific prompt hypothesis, change the template, and rerun under a new experiment name. Use development cases for iteration and the held-out validation split for a final check. Repeat promising runs when model variance could explain a small improvement. Do not bake case IDs or reference answers into prompts. Summarize regressions as well as gains; retain every experiment rather than overwriting the baseline.
+Preparation, audits, feedback and framework changes do not authorize provider calls,
+expanded experiments, prompt changes or deployment. Honor authorization already
+given; do not repeatedly ask for it. Preserve the production template and presets.
 
-## Token usage
+Pause is graceful: the in-flight bounded request finishes before collection stops.
+Resume checks ownership and frozen data; it does not repeat interrupted attempts
+without explicit retry selection within the original limit. A tool timeout does
+not mean the collector stopped. Inspect status and the original process handle.
+Do not edit frozen run files to force continuation after configuration/code drift.
 
-The local CLI saves `usage.json` before transcript extraction, including when a returned response later fails formatting or merging. Request-scoped LangChain callbacks capture usage before LWE converts audio responses to plain text. A returned-message fallback supports backends without callbacks, without counting the same response twice. No LWE/plugin patch is required.
+## Interpretation and handoff
 
-Per-call results retain raw usage metadata and normalized input/output/total tokens, input/output audio tokens, cached input tokens, and reasoning tokens when supplied. Breakdown counts overlap totals: never add audio, cached or reasoning counts on top. Missing fields are `null`, not zero; totals are not estimated from text or audio duration.
+Mechanical structural/label scoring is separate from human listening judgments.
+Audit uncertain cases, failures, changed grades and a documented seeded sample
+of passes. Diagnose evidence, reference, adapter, evaluator and application issues
+before changing prompts. Never optimize prompts using case IDs or reference answers.
 
-Each metric in `summary.json` has a complete `total` only when every observation reports it, plus `reported_subtotal`, `reported_observations`, and `missing_observations`. Failed calls still contribute reported usage. Missing artifacts, unsupported provider reporting and interrupted requests produce unknown observations. Callback coverage cannot reveal invisible provider retries or their unreported charges; this is reported usage, not an invoice.
+Read `experiment.json`, `results.json`, and `summary.json`; matrix reporting adds
+`report.json` and `report.md`. Primary accuracy includes failures; conditional
+accuracy needs coverage. Pending results are provisional. Compare matching cases
+under a common scoring policy. Provider aliases can drift despite frozen settings.
 
-Rescoring copies existing `ID/usage.json` when available and labels it saved usage, with no new model requests. Old predictions without usage remain unavailable. `compare` shows usage summaries for both runs; compare their coverage before comparing totals. Audio tokenization and reasoning accounting differ by provider, so equal token counts need not mean equal cost.
+Report artifact paths and identities, selected cases, repetitions, failures,
+exclusions, unresolved reviews and provenance limitations. Token counts are
+provider-reported with explicit missingness; overlapping breakdowns are not extra
+tokens and do not establish dollar savings. Distinguish offline fixtures from
+authorized live validation. Preserve every earlier run and evaluation.

@@ -90,6 +90,84 @@ def backend() -> Mock:
 class TestLocalLabeler:
     """Verify artifacts, configuration, and failure boundaries."""
 
+    def test_completion_records_format_failure(
+        self,
+        inputs: tuple[Path, Path, Path],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        def fail(_self: LocalLabeler, *_args: object, **_kwargs: object) -> None:
+            raise ModelResponseFormattingError("Missing transcript tags")
+
+        monkeypatch.setattr(LocalLabeler, "run", fail)
+        completion = tmp_path / "completion.json"
+        code = main(
+            [
+                "--srt",
+                str(inputs[0]),
+                "--audio",
+                str(inputs[1]),
+                "--output-dir",
+                str(inputs[2]),
+                "--completion-file",
+                str(completion),
+            ]
+        )
+        assert code == 1
+        outcome = json.loads(completion.read_text())
+        assert outcome["failure_phase"] == "format"
+        assert outcome["error_type"] == "ModelResponseFormattingError"
+
+    def test_frozen_configuration_and_identifier_match_request(
+        self,
+        inputs: tuple[Path, Path, Path],
+        backend: Mock,
+        lwe_directories: tuple[Path, Path],
+        tmp_path: Path,
+    ) -> None:
+        config_dir, data_dir = lwe_directories
+        config = Config(config_dir=str(config_dir), data_dir=str(data_dir))
+        config.load_from_file()
+        settings = {
+            "config": config.config,
+            "metadata": {"provider": "chat_google_genai", "name": "frozen-preset"},
+            "customizations": {"model": "frozen-model", "temperature": 0.25},
+        }
+        frozen = tmp_path / "settings.json"
+        frozen.write_text(json.dumps(settings))
+        (config_dir / "profiles/default/config.yaml").write_text(
+            "model:\n  default_system_message: CHANGED\n"
+        )
+        backend.preset_manager.presets = {}
+        factory = Mock(return_value=backend)
+        LocalLabeler(factory).run(
+            *inputs, preset="frozen-preset", settings_file=frozen, identifier="known-id"
+        )
+        request = backend.run_template.call_args.kwargs
+        assert request["template_vars"] == {
+            "transcription": ORIGINAL,
+            "identifier": "known-id",
+        }
+        assert request["overrides"]["request_overrides"]["preset"] == "frozen-preset"
+        assert (
+            request["overrides"]["request_overrides"]["files"][0].content[0]["type"]
+            == "media"
+        )
+        actual = factory.call_args.args[0]
+        assert actual.get("model.default_system_message") == config.get(
+            "model.default_system_message"
+        )
+        assert (
+            actual.get("database") == f"sqlite:///{inputs[2].resolve() / 'runtime.db'}"
+        )
+        assert actual.args.presets_dir == [
+            str((inputs[2] / "frozen-presets").resolve())
+        ]
+        assert backend.preset_manager.presets["frozen-preset"] == (
+            settings["metadata"],
+            settings["customizations"],
+        )
+
     def test_usage_survives_invalid_model_output(
         self, inputs: tuple[Path, Path, Path], backend: Mock
     ) -> None:
