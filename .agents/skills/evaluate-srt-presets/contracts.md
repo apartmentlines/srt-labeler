@@ -8,6 +8,15 @@ source text and audio to a provider. Preparation is not collection authorization
 
 ## Case authority
 
+The canonical approved corpus in this checkout is
+`test-data/speaker-labels/dataset.json`. Keep corpus revisions and their evidence
+under `test-data/`, with supporting source material in `test-data/source-materials/`.
+Write generated runs, review packages, and reports under `evaluation-artifacts/`
+(`experiments/`, `reviews/`, and `reports/`). Both top-level directories are
+Git-ignored and require separate backups. Packaged and frozen corpus copies are
+snapshots; they do not replace the canonical corpus. Historical paths in frozen
+artifacts remain unchanged when directories move.
+
 `dataset.json` is the authoritative case set. Each corpus lives in a
 new, self-contained revision directory. Source SRTs and WAVs are evidence;
 per-block decisions establish expected classifications. Reference SRTs,

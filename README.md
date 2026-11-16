@@ -168,8 +168,18 @@ python .agents/skills/evaluate-srt-presets/scripts/matrix.py --help
 
 Offline tests use fixtures and fake providers. Preparing a framework or report
 does not make provider requests; live collection requires explicitly scoped
-authorization. Corpora, saved runs, and review packages live under the ignored
-private `call-data/` directory. Rescoring writes a new evaluation.
+authorization. The canonical approved corpus is
+`test-data/speaker-labels/dataset.json`; its directory contains all source SRTs,
+original drafts, reference SRTs, audio, and human-review provenance. Supporting
+source material lives under `test-data/source-materials/`. Keep new corpus
+revisions in new, self-contained directories under `test-data/`.
+
+Generated experiments, listening-review packages, and reports live under
+`evaluation-artifacts/` (in `experiments/`, `reviews/`, and `reports/`,
+respectively). Both top-level directories are Git-ignored and must be backed up
+separately. Moving them preserves corpus identities; frozen experiment files
+and historical provenance must retain their original contents. Rescoring writes
+a new evaluation.
 
 ## Architecture
 

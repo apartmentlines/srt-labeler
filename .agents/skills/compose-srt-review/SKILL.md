@@ -29,7 +29,8 @@ not new production SRT labels. This workflow does not repair transcription.
 
 ```sh
 python .agents/skills/compose-srt-review/scripts/compose.py \
-  --dataset path/to/review-dataset.json --output call-data/review-package --debug
+  --dataset test-data/speaker-labels/dataset.json \
+  --output evaluation-artifacts/reviews/new-review --debug
 ```
 
 The directory and adjacent ZIP must be new. A failed build may leave partial

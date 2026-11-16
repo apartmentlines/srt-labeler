@@ -43,13 +43,13 @@ python .agents/skills/evaluate-srt-presets/scripts/matrix.py --help
 
 ```sh
 python .agents/skills/evaluate-srt-presets/scripts/experiment.py prepare \
-  --dataset path/to/corpus/dataset.json \
+  --dataset test-data/speaker-labels/dataset.json \
   --preset PRESET --template path/to/prompt.md --split development \
-  --run call-data/experiments/baseline
+  --run evaluation-artifacts/experiments/baseline
 python .agents/skills/evaluate-srt-presets/scripts/experiment.py collect \
-  --run call-data/experiments/baseline
+  --run evaluation-artifacts/experiments/baseline
 python .agents/skills/evaluate-srt-presets/scripts/experiment.py status \
-  --run call-data/experiments/baseline
+  --run evaluation-artifacts/experiments/baseline
 ```
 
 Preparation, audits, feedback and framework changes do not authorize provider calls,

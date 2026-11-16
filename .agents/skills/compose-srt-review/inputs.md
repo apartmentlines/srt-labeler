@@ -22,7 +22,7 @@ To assemble new cases, supply a JSON selection of input files:
 ```sh
 python .agents/skills/evaluate-srt-presets/scripts/corpus.py create \
   --inputs path/to/selection.json --corpus-id PROJECT \
-  --output call-data/corpora/new-review
+  --output test-data/new-review
 ```
 
 Paths resolve relative to the selection file. `draft` is labeled SRT awaiting
