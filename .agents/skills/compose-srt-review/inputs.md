@@ -25,7 +25,23 @@ python .agents/skills/evaluate-srt-presets/scripts/corpus.py create \
   --output test-data/new-review
 ```
 
-Paths resolve relative to the selection file. `draft` is labeled SRT awaiting
+Paths resolve relative to the selection file; absolute paths are also accepted.
+For canonical operator recordings, set each `audio` field to the appropriate
+file under
+`${HOME}/git/apartmentlines/testing-references/audio/operator-recordings/`.
+For example, using `${HOME}` as a placeholder for your home directory:
+
+```json
+"audio": "${HOME}/git/apartmentlines/testing-references/audio/operator-recordings/2026-11-05T19_49_02_+13523270688.wav"
+```
+
+For a custom audio location, supply its absolute path or a path relative to the
+selection file in `audio`, then pass that selection with `--inputs`. JSON paths
+do not expand environment variables or `~`; substitute the actual home directory
+for `${HOME}` before saving the selection JSON. Creation copies the WAV into the new corpus; existing corpus
+and review packages retain their frozen audio copies.
+
+`draft` is labeled SRT awaiting
 human review. `source` may be omitted; creation then removes exactly one
 Operator/Caller prefix to derive the unlabeled text. Supplying the original
 source verifies text, index, and timestamp preservation.

@@ -71,6 +71,16 @@ srt-eval --srt call.srt --audio call.wav \
   --preset gemini-3.8-flash-srt-labeler --output-dir runs/first
 ```
 
+Canonical operator recordings live in
+`${HOME}/git/apartmentlines/testing-references/audio/operator-recordings`. Pass a
+recording there, or any custom WAV location, with `--audio`:
+
+```bash
+srt-eval --srt call.srt \
+  --audio "${HOME}/git/apartmentlines/testing-references/audio/operator-recordings/2026-11-05T19_49_02_+13523270688.wav" \
+  --output-dir runs/reference-call
+```
+
 If omitted, `--preset` uses `LWE_DEFAULT_PRESET` from `srt_labeler/constants.py`,
 the same default as the production pipeline. `srt-eval --help` shows its current
 value. Each invocation uses only the selected preset, with no automatic fallback.
@@ -170,9 +180,14 @@ Offline tests use fixtures and fake providers. Preparing a framework or report
 does not make provider requests; live collection requires explicitly scoped
 authorization. The canonical approved corpus is
 `test-data/speaker-labels/dataset.json`; its directory contains all source SRTs,
-original drafts, reference SRTs, audio, and human-review provenance. Supporting
-source material lives under `test-data/source-materials/`. Keep new corpus
-revisions in new, self-contained directories under `test-data/`.
+original drafts, reference SRTs, audio, and human-review provenance. Canonical
+operator recording source audio lives in the shared
+`${HOME}/git/apartmentlines/testing-references/audio/operator-recordings/` directory.
+Other supporting source material lives under `test-data/source-materials/`.
+Keep new corpus revisions in new, self-contained directories under `test-data/`,
+including their frozen audio evidence. See the
+[review input guide](.agents/skills/compose-srt-review/inputs.md) for selecting
+canonical recordings or custom audio locations.
 
 Generated experiments, listening-review packages, and reports live under
 `evaluation-artifacts/` (in `experiments/`, `reviews/`, and `reports/`,

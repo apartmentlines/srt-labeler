@@ -10,7 +10,13 @@ source text and audio to a provider. Preparation is not collection authorization
 
 The canonical approved corpus in this checkout is
 `test-data/speaker-labels/dataset.json`. Keep corpus revisions and their evidence
-under `test-data/`, with supporting source material in `test-data/source-materials/`.
+under `test-data/`. Canonical operator recording source audio lives in
+`${HOME}/git/apartmentlines/testing-references/audio/operator-recordings/`; other
+supporting source material lives in `test-data/source-materials/`. New corpora
+copy the selected audio into their own revision directories as frozen evidence.
+Use the [input guide](../compose-srt-review/inputs.md) to select canonical or
+custom audio paths. Any CLI that introduces a default source-audio directory
+must expose an optional argument to override that directory.
 Write generated runs, review packages, and reports under `evaluation-artifacts/`
 (`experiments/`, `reviews/`, and `reports/`). Both top-level directories are
 Git-ignored and require separate backups. Packaged and frozen corpus copies are
